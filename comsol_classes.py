@@ -8,7 +8,7 @@ from enum import Enum
 import pyvista as pv
 import logging
 from tqdm import tqdm
-from helper import (ModelData,
+from .helper import (ModelData,
                     ensure_pathlib_path,
                     read_comsol_fields,
                     initilise_plotter,
