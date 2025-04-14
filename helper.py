@@ -6,7 +6,7 @@ import scipy
 import re
 from pathlib import Path
 
-def calculate_normal(dip: float, strike: float) -> tuple[float]:
+def calculate_normal(dip: float, strike: float) -> np.ndarray:
     """_summary_
 
     Args:
@@ -21,7 +21,7 @@ def calculate_normal(dip: float, strike: float) -> tuple[float]:
     x_normal = -np.sin(dip)*np.sin(strike) 
     y_normal =  np.sin(dip)*np.cos(strike)
     z_normal = -np.cos(dip)
-    return (x_normal, y_normal, z_normal)
+    return np.array([x_normal, y_normal, z_normal])
     
 
 class ModelData(BaseModel):
