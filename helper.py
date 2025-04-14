@@ -10,8 +10,8 @@ def calculate_normal(dip: float, strike: float) -> tuple[float]:
     """_summary_
 
     Args:
-        dip (float): degrees
-        strike (float): degrees
+        dip (float): rad
+        strike (float): rad
 
     Returns:
         tuple[float]: (x_normal, y_normal, z_normal)
