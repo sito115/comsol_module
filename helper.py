@@ -10,8 +10,8 @@ def calculate_normal(dip: float, strike: float) -> np.ndarray:
     """_summary_
 
     Args:
-        dip (float): rad
-        strike (float): rad
+        dip (float): deg
+        strike (float): deg
 
     Returns:
         tuple[float]: (x_normal, y_normal, z_normal)
