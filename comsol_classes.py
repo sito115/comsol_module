@@ -198,7 +198,7 @@ class COMSOL_VTU():
         for key in tqdm(self.times.keys(), f"Removing redundant fields '{field_name}'"):
             self.mesh.point_data.remove(self.vtu_pattern.format(field_name, key))
     
-    def format_fied(self, field_name: str, time: Union[str, float, int]):
+    def format_field(self, field_name: str, time: Union[str, float, int]):
         assert field_name in self.exported_fields
         if isinstance(time, str):
             assert time in self.times.keys()
@@ -227,7 +227,7 @@ class COMSOL_VTU():
             quantities = np.zeros((len(fields), len(self.mesh.points)))
             for i_field, field in enumerate(fields):  # noqa: F402
                 quantities[i_field] = self.mesh.point_data[self.vtu_pattern.format(field, time_key)]
-            self.mesh.point_data[self.format_fied(field_name, time_key)] = np.sqrt(np.sum(quantities**2, axis = 0))
+            self.mesh.point_data[self.format_field(field_name, time_key)] = np.sqrt(np.sum(quantities**2, axis = 0))
         
     
     def overwrite_domain_from_surface(self, surface: pv.DataSet, field_name3D: str, field_name2D: str = 'Color') -> None:
@@ -292,8 +292,8 @@ class COMSOL_VTU():
             np.ndarray: _description_
         """
         if is_cell_data:
-            return np.array([self.mesh.cell_data[self.format_fied(field, key)] for key in self.times.keys()])        
-        return np.array([self.mesh.point_data[self.format_fied(field, key)] for key in self.times.keys()])
+            return np.array([self.mesh.cell_data[self.format_field(field, key)] for key in self.times.keys()])        
+        return np.array([self.mesh.point_data[self.format_field(field, key)] for key in self.times.keys()])
             
             
     def calculate_total_entropy_per_vol(self,
@@ -402,7 +402,7 @@ if __name__ == '__main__':
     
     normal_vector, point1 = compute_surface_normal_vector(fault_2d.bounds)
     
-    field_name = domain_3d.format_fied(ComsolKeyNames.T.value, -1)
+    field_name = domain_3d.format_field(ComsolKeyNames.T.value, -1)
     domain_3d.mesh.clip(normal = normal_vector, origin=point1).plot(scalars = field_name)
     
     bounds = domain_3d.mesh.bounds
