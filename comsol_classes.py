@@ -365,6 +365,16 @@ class COMSOL_VTU():
             self.times.update(arg.times)
             self.mesh.point_data.update(arg.mesh.point_data)
             
+            
+    def delete_field(self, field_name: str):
+        assert field_name in self.exported_fields
+        for time_key in self.times.keys():
+            self.mesh.point_data.pop(self.format_field(field_name, time_key), None)
+        self.exported_fields.remove(field_name)
+        
+        
+        
+            
 
         
 if __name__ == '__main__':
