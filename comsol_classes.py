@@ -369,7 +369,8 @@ class COMSOL_VTU():
     def delete_field(self, field_name: str):
         assert field_name in self.exported_fields
         for time_key in self.times.keys():
-            self.mesh.point_data.pop(self.format_field(field_name, time_key), None)
+            temp_field_name = self.format_field(field_name, time_key)
+            self.mesh.point_data.remove(temp_field_name)
         self.exported_fields.remove(field_name)
         
         
