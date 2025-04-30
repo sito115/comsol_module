@@ -1,7 +1,7 @@
 import numpy as np
 import pyvista as pv
 from typing import Optional, Union, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import scipy
 import re
 from pathlib import Path
@@ -16,8 +16,8 @@ def calculate_normal(dip: float, strike: float) -> np.ndarray:
     Returns:
         tuple[float]: (x_normal, y_normal, z_normal)
     """
-    dip    = np.deg2rad(60)
-    strike = np.deg2rad(90)
+    dip    = np.deg2rad(dip)
+    strike = np.deg2rad(strike)
     x_normal = -np.sin(dip)*np.sin(strike) 
     y_normal =  np.sin(dip)*np.cos(strike)
     z_normal = -np.cos(dip)
