@@ -112,6 +112,7 @@ class COMSOL_VTU():
             mesh_kwargs (dict): Additional keyword arguments for `mesh.clip()` or `mesh.clip_box()`.
             add_mesh_kwargs (dict): Additional keyword arguments for `pv.add_mesh()`.
             is_min_max (bool, optional): Display min and max values in the colorbar. Defaults to False.
+            param_string (str, optional) : Display Parameters
             
         Returns:
             _type_: None
@@ -170,12 +171,17 @@ class COMSOL_VTU():
             max_text_actor = plotter.add_text(f"Max: {np.min(mesh[movie_field]):.2e}", font_size=0.6 * fs,
                              color="black", position=max_text_position)
 
+        param_string = kwargs.pop("param_string", "")
         for idx, (key, time) in tqdm(enumerate(self.times.items(), start = 1), desc=f'Processing frames for {field}', total = len(self.times)):
             if is_diff:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)] - val0
             else:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
-            plotter.add_text(f"Output {idx}: {time:.3e} s", name='time-label')
+            plotter.add_text(f"Output {idx}: {time:.3e} s", name='time-label', font_size=16)
+            plotter.add_text(param_string,
+                viewport=True, 
+                position=(0, 0.8),  #"left_edge",
+                font_size=14,)
             if is_ind_cmap:
                 actor.mapper.scalar_range = ( np.min(mesh[movie_field]), np.max(mesh[movie_field]) )
             if is_min_max:
@@ -369,7 +375,8 @@ class COMSOL_VTU():
     def delete_field(self, field_name: str):
         assert field_name in self.exported_fields
         for time_key in self.times.keys():
-            self.mesh.point_data.pop(self.format_field(field_name, time_key), None)
+            temp_field_name = self.format_field(field_name, time_key)
+            self.mesh.point_data.remove(temp_field_name)
         self.exported_fields.remove(field_name)
         
         

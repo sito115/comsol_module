@@ -1,7 +1,7 @@
 import numpy as np
 import pyvista as pv
 from typing import Optional, Union, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import scipy
 import re
 from pathlib import Path
@@ -16,8 +16,8 @@ def calculate_normal(dip: float, strike: float) -> np.ndarray:
     Returns:
         tuple[float]: (x_normal, y_normal, z_normal)
     """
-    dip    = np.deg2rad(60)
-    strike = np.deg2rad(90)
+    dip    = np.deg2rad(dip)
+    strike = np.deg2rad(strike)
     x_normal = -np.sin(dip)*np.sin(strike) 
     y_normal =  np.sin(dip)*np.cos(strike)
     z_normal = -np.cos(dip)
@@ -129,8 +129,10 @@ def read_comsol_fields(mesh:pv.DataSet, field_pattern, time_pattern) -> tuple[li
     Returns:
         tuple[pv.DataSet,list[str], dict[str, float]]: _description_
     """    
-    exported_fields : list[str] = list(set([re.search(field_pattern, key).group(1) for key in mesh.point_data.keys()]))
+    # assure that it is a field from COMSOL (usually contains an @)
+    exported_fields : list[str] = list(set([re.search(field_pattern, key).group(1) for key in mesh.point_data.keys() if "@" in key])) 
     # Sort the times and map them back to the original string values
-    time_map : dict[str:float] = {re.search(time_pattern, key).group(1): float(re.search(time_pattern, key).group(1)) for key in mesh.point_data.keys()}
+    # assure that it is a field from COMSOL (usually contains an @)
+    time_map : dict[str:float] = {re.search(time_pattern, key).group(1): float(re.search(time_pattern, key).group(1)) for key in mesh.point_data.keys() if "@" in key}
     times : dict[str:float]= dict(sorted(time_map.items(), key=lambda x: x[1]))  # Sort by float value
     return (exported_fields, times)  
