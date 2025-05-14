@@ -13,7 +13,7 @@ def calculate_S_therm(lambda_m : float, T_0 : float, temp_gradient : np.ndarray)
         temp_gradient (np.ndarray): [N x 3] matrix of temperature gradient components [K/m]
 
     Returns:
-        np.ndarray: entropy generation rate per VOLUME [W/(K * m^3 * s)]
+        np.ndarray: entropy generation rate per VOLUME [W/(K * m^3)]
     """
     return lambda_m / T_0**2 * (temp_gradient[:, 0]**2 + temp_gradient[:, 1]**2 + temp_gradient[:, 2]**2) 
 
