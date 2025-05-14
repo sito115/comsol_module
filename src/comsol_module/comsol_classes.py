@@ -11,8 +11,7 @@ from tqdm import tqdm
 from .helper import (ModelData,
                     ensure_pathlib_path,
                     read_comsol_fields,
-                    initilise_plotter,
-                    compute_surface_normal_vector)
+                    initilise_plotter)
 from .entropy import (calculate_S_therm,
                       calculate_S_visc)
 
@@ -31,22 +30,19 @@ class ComsolKeyNames(Enum):
 
 @dataclass
 class COMSOL_VTU():
-    """_summary_
-
-    Raises:
-        ValueError: _description_
+    """Class to read exported simulation files from COMSOL.
 
     Attributes:
         mesh (pv.DataSet): _description_
         times (dict(str:float)): Sorted dictionary of exported times. The key corresponds to the exact string in the field name.
         exported fields (list(str)): All exported field names.
     """    
+    
     vtu_path: Union[Path, str]
     optional_vtu_paths : Optional[Union[List[Path], Path]] = None
     name : Optional[str] = ''
     vtu_pattern =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
 
-    
     class Config:
         arbitrary_types_allowed = True # for numpy etc
     
@@ -191,7 +187,18 @@ class COMSOL_VTU():
             
         plotter.close()
 
-    def get_point_values(self, time_step : Union[int, str], field: ComsolKeyNames) -> np.ndarray:
+
+
+    def get_point_values(self, field: ComsolKeyNames, time_step : Union[int, str]) -> np.ndarray:
+        """_summary_
+
+        Args:
+            field (ComsolKeyNames): _description_
+            time_step (Union[int, str]): _description_
+
+        Returns:
+            np.ndarray: _description_
+        """        
         if isinstance(time_step, int):
             key = list(self.times.keys())[time_step]
             logging.info(f'Time step {key}')
@@ -199,12 +206,28 @@ class COMSOL_VTU():
             key = time_step
         return self.mesh.point_data[self.vtu_pattern.format(field,key)]
     
+    
     def unify_field(self, field_name:str) -> None:
+        """Merge all entries from COMSOL into on field.
+        Useful for quantities that do not change over time to save memory.
+
+        Args:
+            field_name (str): 
+        """        
         self.mesh.point_data[field_name] = self.mesh.point_data[self.vtu_pattern.format(field_name, list(self.times.keys())[0])]
         for key in tqdm(self.times.keys(), f"Removing redundant fields '{field_name}'"):
             self.mesh.point_data.remove(self.vtu_pattern.format(field_name, key))
     
-    def format_field(self, field_name: str, time: Union[str, float, int]):
+    def format_field(self, field_name: str, time: Union[str, float, int]) -> str:
+        """
+
+        Args:
+            field_name (str): Must be in self.exported_fields
+            time (Union[str, float, int]): Can be a string "1E13", a float 1E13 or the integer index of time series.
+
+        Returns:
+            str: Returns formatted field name for fields exported via COMSOL ("field_name_@_time").
+        """        
         assert field_name in self.exported_fields
         if isinstance(time, str):
             assert time in self.times.keys()
@@ -275,28 +298,18 @@ class COMSOL_VTU():
             key = time_step
         return data.cell_data[self.vtu_pattern.format(field,key)]
     
-    def compute_cell_data(self, **kwargs):
-        """
-            pass_point_databool, default: False, keep point data in pyvista object
-        """
-        is_pass_point_data = kwargs.pop('pass_point_data', True)        
-        self.mesh = self.mesh.point_data_to_cell_data(pass_point_data=is_pass_point_data)
-    
     
     def get_array(self, field: ComsolKeyNames, is_cell_data : bool = False) -> np.ndarray:
-        """_summary_
+        """Return numpy matrix of given field name (N_TIME_STEP x N_POINTS)
 
         Args:
-            field (ComsolKeyNames): _description_
-            
-        Keyword Args:
-            city (str, optional): The user's city.
-            country (str, optional): The user's country.
-            active (bool, optional): Whether the user is active.
+            field (ComsolKeyNames): field_name
+            is_cell_data (bool, optional): Return cell or point data . Defaults to False.
 
         Returns:
-            np.ndarray: _description_
+            np.ndarray: 
         """
+        assert field in self.exported_fields, f"{field} not found."
         if is_cell_data:
             return np.array([self.mesh.cell_data[self.format_field(field, key)] for key in self.times.keys()])        
         return np.array([self.mesh.point_data[self.format_field(field, key)] for key in self.times.keys()])
@@ -305,7 +318,7 @@ class COMSOL_VTU():
     def calculate_total_entropy_per_vol(self,
                                         model_data: ModelData,
                                         time_steps: Union[list[int],int] = None,
-                                        is_save_as_point_data: bool = False) -> np.ndarray:
+                                        is_save_as_cell_data: bool = False) -> np.ndarray:
         """_summary_
 
         Args:
@@ -315,53 +328,60 @@ class COMSOL_VTU():
         Returns:
             np.ndarray: [N x 2] Entropy (therm, visc) in  W/(K * s)
         """
+        # Default to all time steps if none provided
         if time_steps is None:
             time_steps = np.arange(len(self.times))
         
+         # Ensure time_steps is a list
         if isinstance(time_steps, int):
             time_steps = [time_steps]
             
         assert max(time_steps) <= len(self.times) and min(time_steps) >= 0
         
-        time_keys : list[str] = list(self.times.keys())
-        time_keys : list[str] = [time_keys[i] for i in time_steps]
+        # Extract time keys for the selected time steps
+        time_keys = [list(self.times.keys())[i] for i in time_steps]
         
-        data = self.mesh.point_data_to_cell_data() # convert to cell data to match cell areas to points in gradient
+        # convert to cell data to match cell areas for Integration
+        cell_mesh = self.mesh.point_data_to_cell_data() 
         
+        cell_sizes = cell_mesh.compute_cell_sizes()
+        if np.sum(cell_sizes['Volume']) == 0:
+            cell_volumes = cell_sizes['Area'] # 2D
+        else:
+            cell_volumes = cell_sizes['Volume'] # 3D
+        
+        # Initialize array for storing integrated entropy values (thermal, viscous)
         integraded_entropy = np.zeros((len(time_steps), 2))
         for idx, time_key in enumerate(time_keys):
             logging.debug(f'Time {time_key}')
             
-            temp_gradient = data.compute_derivative(scalars=self.vtu_pattern.format(ComsolKeyNames.T.value,time_key)).cell_data['gradient']
-            try:
-                dary_x = data.cell_data[self.vtu_pattern.format(ComsolKeyNames.darcy_x.value,time_key)]
-            except KeyError as e:
-                logging.warning(f'{e} - Created 0 matrix')
-                dary_x = np.zeros_like(temp_gradient[:, 0])
-                
-            try:
-                dary_y = data.cell_data[self.vtu_pattern.format(ComsolKeyNames.darcy_y.value,time_key)]
-            except KeyError as e:
-                logging.warning(f'{e} - Created 0 matrix')
-                dary_y = np.zeros_like(temp_gradient[:, 0])
-                
-            try:
-                dary_z = data.cell_data[self.vtu_pattern.format(ComsolKeyNames.darcy_z.value,time_key)]
-            except KeyError as e:
-                logging.warning(f'{e} - Created 0 matrix')
-                dary_z = np.zeros_like(temp_gradient[:, 0])
-
-            # TODO: replace T0 with temperature field
+            temp_gradient = cell_mesh.compute_derivative(scalars=self.vtu_pattern.format(ComsolKeyNames.T.value,time_key)).cell_data['gradient']
+            # Retrieve Darcy velocities with default handling
+            dary_x = self._get_darcy_data(cell_mesh, ComsolKeyNames.darcy_x, time_key, temp_gradient)
+            dary_y = self._get_darcy_data(cell_mesh, ComsolKeyNames.darcy_y, time_key, temp_gradient)
+            dary_z = self._get_darcy_data(cell_mesh, ComsolKeyNames.darcy_z, time_key, temp_gradient)
+        
+            # TODO: replace T0 with temperature field, delete model_data
             s_therm = calculate_S_therm(model_data.lambda_m , model_data.calculate_T0() , temp_gradient)
             s_visc  = calculate_S_visc(model_data.mu0, model_data.k_m, model_data.calculate_T0() , [dary_x, dary_y, dary_z])
             
-            if is_save_as_point_data:
-                self.mesh.cell_data[self.vtu_pattern.format(ComsolKeyNames.s_tol.value, time_key)] = (s_therm + s_visc).copy()
-            
-            integraded_entropy[idx, 0] = np.sum(s_therm * data.compute_cell_sizes()['Area']) 
-            integraded_entropy[idx, 1] = np.sum(s_visc * data.compute_cell_sizes()['Area'])
+            if is_save_as_cell_data:
+                self.mesh.cell_data[self.format_field(ComsolKeyNames.s_tol.value, time_key)] = (s_therm + s_visc).copy()
+        
+            integraded_entropy[idx, 0] = np.sum(s_therm * cell_volumes) 
+            integraded_entropy[idx, 1] = np.sum(s_visc * cell_volumes)
             
         return integraded_entropy
+    
+    
+    
+    def _get_darcy_data(self, cell_mesh: pv.UnstructuredGrid, darcy_key:ComsolKeyNames, time_key, temp_gradient):
+        """Helper function to retrieve Darcy velocity data with default handling."""
+        try:
+            return cell_mesh.cell_data[self.format_field(darcy_key.value, time_key)]
+        except KeyError:
+            return np.zeros((cell_mesh.n_cells, ))
+    
     
     def merge_datasets(self, *args) -> None:
         for arg in args:
@@ -392,47 +412,3 @@ if __name__ == '__main__':
     format='%(asctime)s - %(levelname)s - %(message)s',  # Define the format of log messages
     )
     
-    root = Path('MergeSurface2Domain')
-    path_fault_2d  = root / 'Fracture_sol1.vtu'
-    path_fault_2d.exists()
-    path_domain_3d = root / 'Solution1.vtu'
-    fault_2d  = pv.read(path_fault_2d)
-    domain_3d = COMSOL_VTU(path_domain_3d)
-
-    # plotter.show()
-    def create_smooth_bounds(mesh: pv.DataSet, val_old : float, val_new: float, axis: str = 'z') -> pv.DataSet:
-        map_axis_dict = {'x': 0, 'y': 1, 'z': 2}
-        axis = map_axis_dict[axis]
-        mesh.points[:, axis] = np.where(mesh.points[:, axis] == val_old, val_new, mesh.points[:, axis])
-        return mesh
-
-    print(domain_3d.mesh.bounds)
-    while domain_3d.mesh.bounds[-1] > 0.:
-        domain_3d.mesh = create_smooth_bounds(domain_3d.mesh, domain_3d.mesh.bounds[-1], 0. , axis='z')
-    print(domain_3d.mesh.bounds)
-
-
-    print(fault_2d.bounds)
-    while fault_2d.bounds[-1] > 0.:
-        fault_2d = create_smooth_bounds(fault_2d, fault_2d.bounds[-1], 0. , axis='z')
-    print(fault_2d.bounds)
-    
-    normal_vector, point1 = compute_surface_normal_vector(fault_2d.bounds)
-    
-    field_name = domain_3d.format_field(ComsolKeyNames.T.value, -1)
-    domain_3d.mesh.clip(normal = normal_vector, origin=point1).plot(scalars = field_name)
-    
-    bounds = domain_3d.mesh.bounds
-    xrng = np.arange(bounds[0], bounds[1] + 1, 100)
-    yrng = np.arange(bounds[2], bounds[3] + 1, 100)
-    zrng = np.arange(bounds[4], bounds[5] + 1, 100)
-    grid = pv.RectilinearGrid(xrng, yrng, zrng)
-    grid.plot(show_edges=True)
-    print(grid.bounds)
-    print(domain_3d.mesh.bounds)
-    
-    
-    result              = grid.sample(domain_3d.mesh, categorical=True)
-    clip = result.clip(normal = normal_vector, origin=point1)
-    # Visualize
-    clip.plot(scalars=field_name, cmap="coolwarm", show_edges=True)
