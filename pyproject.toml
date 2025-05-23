@@ -1,31 +1,35 @@
 [project]
 name = "comsol_module"
 version = "0.1.0"
-description = "Add your description here"
+description = "Module to read and process output vtus/txt files from COMSOL."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "attrs>=25.3.0",
-    "ipykernel>=6.29.5",
-    "ipywidgets>=8.1.5",
-    "jupyterlab>=4.4.0",
     "matplotlib>=3.10.1",
     "nbformat>=5.10.4",
     "numpy>=2.2.4",
     "pandas>=2.2.3",
-    "plotly>=6.0.1",
     "pydantic>=2.11.3",
-    "pydoe>=0.3.8",
     "pyvista>=0.44.2",
-    "salib>=1.5.1",
     "scipy>=1.15.2",
     "tqdm>=4.67.1",
+]
+
+[project.optional-dependencies]
+plotting = [
+    "imageio[ffmpeg]>=2.37.0",
     "trame>=3.8.2",
-    "trame-jupyter-extension>=2.1.4",
+    "plotly>=6.0.1",
     "trame-vtk>=2.8.15",
     "trame-vuetify>=3.0.0",
-    "vtk>=9.3.1",
-    "imageio[ffmpeg]>=2.37.0",
+]
+
+jupyter = [
+    "trame-jupyter-extension>=2.1.4",
+    "ipykernel>=6.29.5",
+    "ipywidgets>=8.1.5",
+    "jupyterlab>=4.4.0",
 ]
 
 [dependency-groups]

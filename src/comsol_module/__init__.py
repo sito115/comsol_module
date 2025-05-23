@@ -1,0 +1,2 @@
+from .comsol_classes import COMSOL_VTU
+from .entropy import calculate_S_therm, calculate_S_total, calculate_S_visc, caluclate_entropy_gen_number_isoflux, caluclate_entropy_gen_number_isotherm
