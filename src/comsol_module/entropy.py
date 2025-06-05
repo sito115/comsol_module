@@ -8,8 +8,8 @@ def calculate_S_therm(lambda_m : float, T_0 : float, temp_gradient : np.ndarray)
     """Calculate the thermal entropy generation rate per volume.
 
     Args:
-        lambda_m (float): _description_
-        T_0 (float): _description_
+        lambda_m (float): thermal conductivity [W/(m*K)]
+        T_0 (float): Reference temperature [K]
         temp_gradient (np.ndarray): [N x 3] matrix of temperature gradient components [K/m]
 
     Returns:

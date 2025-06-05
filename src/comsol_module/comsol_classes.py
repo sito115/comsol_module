@@ -109,7 +109,8 @@ class COMSOL_VTU():
             add_mesh_kwargs (dict): Additional keyword arguments for `pv.add_mesh()`.
             is_min_max (bool, optional): Display min and max values in the colorbar. Defaults to False.
             param_string (str, optional) : Display Parameters
-            
+            title_string (str, optional): Title of the plotter window. Defaults to None.
+            plot_last_frame (bool, optional): If True, the last frame will be saved as a screenshot. Defaults to True.
         Returns:
             _type_: None
         """
@@ -168,12 +169,13 @@ class COMSOL_VTU():
                              color="black", position=max_text_position)
 
         param_string = kwargs.pop("param_string", "")
+        title_string = kwargs.pop("title_string", "")
         for idx, (key, time) in tqdm(enumerate(self.times.items(), start = 1), desc=f'Processing frames for {field}', total = len(self.times)):
             if is_diff:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)] - val0
             else:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
-            plotter.add_text(f"Output {idx}: {time:.3e} s", name='time-label', font_size=16)
+            plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s", name='time-label', font_size=14)
             plotter.add_text(param_string,
                 viewport=True, 
                 position=(0, 0.8),  #"left_edge",
@@ -184,7 +186,10 @@ class COMSOL_VTU():
                 min_text_actor.input = f'Min: {np.min(mesh[movie_field]):.2e}'
                 max_text_actor.input = f'Max: {np.max(mesh[movie_field]):.2e}'
             plotter.write_frame()
-            
+        
+        plot_last_frame  = kwargs.pop('plot_last_frame', False)
+        if plot_last_frame:
+            plotter.screenshot(mp4_file.parent / f'{self.vtu_path.stem}_{field}_lastframe.png')
         plotter.close()
 
 
