@@ -70,7 +70,8 @@ class COMSOL_VTU():
     
     def __post_init__(self):
         logging.debug('Reading vtu file...')
-        self.mesh = pv.read(self.vtu_path)
+        mesh = pv.read(self.vtu_path)
+        self.mesh = mesh.clean()
         logging.debug('Finished')
         time_pattern = r"@_t=([\d.]+(?:[Ee][+-]?\d+)?)" # find exported time steps
         field_pattern = r"^(.*?)_@_t"                    # find exported fields
@@ -375,41 +376,39 @@ class COMSOL_VTU():
             else:
                 entropy = np.zeros((len(time_steps), self.mesh.n_cells, 2))
         else:
-            if is_return_as_integration:
-                entropy = np.zeros((len(time_steps), 2))
-            else:
-                entropy = np.zeros((len(time_steps), self.mesh.n_points, 2))
-    
-
+            entropy = np.zeros((len(time_steps), self.mesh.n_points, 2))
     
         for idx, time_key in enumerate(time_keys):
             logging.debug(f'Time {time_key}')
             
-            temp_gradient = cell_mesh.compute_derivative(scalars=self.vtu_pattern.format(ComsolKeyNames.T.value,time_key)).cell_data['gradient']
+            if is_return_as_cell_data:
+                deriv = cell_mesh.compute_derivative(scalars=self.format_field(ComsolKeyNames.T.value,time_key), preference = 'cell')
+                temp_gradient = deriv.cell_data['gradient']
+            else:
+                deriv = self.mesh.compute_derivative(scalars=self.format_field(ComsolKeyNames.T.value,time_key), preference = 'point')
+                temp_gradient = deriv.point_data['gradient']
             # Retrieve Darcy velocities with default handling
         
             s_therm = calculate_S_therm(model_data['lambda_m'] , model_data['T0'] , temp_gradient)
             try:
-                s_visc  = calculate_S_visc(model_data['mu0'], model_data['k_m'], model_data['T0'] , self.get_cell_values(ComsolKeyNames.darcy_total.value, time_key))
+                if is_return_as_cell_data:
+                    s_visc  = calculate_S_visc(model_data['mu0'], model_data['k_m'], model_data['T0'] , self.get_cell_values(ComsolKeyNames.darcy_total.value, time_key))
+                else:
+                    s_visc  = calculate_S_visc(model_data['mu0'], model_data['k_m'], model_data['T0'] , self.get_point_values(ComsolKeyNames.darcy_total.value, time_key))
             except KeyError:
                 logging.warning(f"Field '{ComsolKeyNames.darcy_total.value}' not found in exported fields. Returning zero viscous entropy.")
                 s_visc = np.zeros_like(s_therm)
             
-            self.mesh.cell_data[self.format_field(ComsolKeyNames.s_therm.value, time_key)] = s_therm
-            self.mesh.cell_data[self.format_field(ComsolKeyNames.s_visc.value, time_key)] = s_visc
-        
-        if not is_return_as_cell_data:
-            # Convert cell data to point data if requested
-            s_therm = self.mesh.cell_data_to_point_data().point_data(self.format_field(ComsolKeyNames.s_therm, time_key))
-            s_visc = self.mesh.cell_data_to_point_data().point_data(self.format_field(ComsolKeyNames.s_visc, time_key))
-        
-        
-        if is_return_as_integration:
-            entropy[idx, 0] = np.sum(s_therm * cell_volumes) 
-            entropy[idx, 1] = np.sum(s_visc * cell_volumes)
-        else:
-            entropy[idx, :, 0] = s_therm
-            entropy[idx, :, 1] = s_visc
+            if is_return_as_cell_data:
+                self.mesh.cell_data[self.format_field(ComsolKeyNames.s_therm.value, time_key)] = s_therm
+                self.mesh.cell_data[self.format_field(ComsolKeyNames.s_visc.value, time_key)] = s_visc
+            
+            if is_return_as_integration:
+                entropy[idx, 0] = np.sum(s_therm * cell_volumes) 
+                entropy[idx, 1] = np.sum(s_visc * cell_volumes)
+            else:
+                entropy[idx, :, 0] = s_therm
+                entropy[idx, :, 1] = s_visc
             
         return entropy
     
