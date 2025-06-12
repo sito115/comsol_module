@@ -44,6 +44,7 @@ class COMSOL_VTU():
     optional_vtu_paths : Optional[Union[List[Path], Path]] = None
     name : Optional[str] = ''
     vtu_pattern =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
+    is_clean_mesh : Optional[bool] = True 
 
     class Config:
         arbitrary_types_allowed = True # for numpy etc
@@ -70,8 +71,9 @@ class COMSOL_VTU():
     
     def __post_init__(self):
         logging.debug('Reading vtu file...')
-        mesh = pv.read(self.vtu_path)
-        self.mesh = mesh.clean()
+        self.mesh = pv.read(self.vtu_path)
+        if self.is_clean_mesh:
+            self.mesh = self.mesh.clean(progress_bar = True)
         logging.debug('Finished')
         time_pattern = r"@_t=([\d.]+(?:[Ee][+-]?\d+)?)" # find exported time steps
         field_pattern = r"^(.*?)_@_t"                    # find exported fields
