@@ -7,6 +7,7 @@ from typing import Union, List
 from enum import StrEnum
 import pyvista as pv
 import logging
+from matplotlib import pyplot as plt
 from tqdm import tqdm
 from .helper import (ensure_pathlib_path,
                     read_comsol_fields,
@@ -119,6 +120,8 @@ class COMSOL_VTU():
         Returns:
             _type_: None
         """
+        
+        my_cmap = kwargs.pop("cmap", plt.get_cmap("turbo", 15))
         movie_field = kwargs.pop('movie_field', field + "-mp4")
         if mp4_file is None:
             mp4_file = self.vtu_path.parent.joinpath(f'{self.vtu_path.stem}_{field}.mp4')
@@ -155,7 +158,10 @@ class COMSOL_VTU():
             mesh[movie_field] = val0
         
         add_mesh_kwargs = kwargs.pop('add_mesh_kwargs', {})
-        actor = plotter.add_mesh(mesh, scalars = movie_field, **add_mesh_kwargs) # The sliced plane
+        actor = plotter.add_mesh(mesh,
+                                 scalars = movie_field,
+                                 cmap=my_cmap,
+                                 **add_mesh_kwargs) # The sliced plane
         plotter.write_frame()
         
         is_ind_cmap = kwargs.pop('is_ind_cmap', False)
@@ -351,9 +357,6 @@ class COMSOL_VTU():
         missing = [k for k in required_model_keys if k not in model_data]
         if missing:
             print("Missing keys:", missing)
-                    
-        if 'Total_Darcy_velocity_magnitude' not in self.exported_fields:
-            logging.warning('Total_Darcy_velocity_magnitude not found in exported fields. Calculatin only thermal entropy.')
         
         # Extract time keys for the selected time steps
         time_keys = [list(self.times.keys())[i] for i in time_steps]
@@ -380,7 +383,7 @@ class COMSOL_VTU():
             try:
                 s_visc  = calculate_S_visc(model_data['mu0'], model_data['k_m'], model_data['T0'] , self.get_point_values(ComsolKeyNames.darcy_total.value, time_key))
             except KeyError:
-                logging.warning(f"Field '{ComsolKeyNames.darcy_total.value}' not found in exported fields. Returning zero viscous entropy.")
+                # logging.debug(f"Field '{ComsolKeyNames.darcy_total.value}' not found in exported fields. Returning zero viscous entropy.")
                 s_visc = np.zeros_like(s_therm)
             
             if is_return_as_integration:
