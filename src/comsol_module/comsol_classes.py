@@ -22,13 +22,15 @@ class ComsolKeyNames(StrEnum):
     T_grad_x = 'Temperature_gradient,_x-component'
     T_grad_y = 'Temperature_gradient,_y-component'
     T_grad_z = 'Temperature_gradient,_z-component'
+    T_grad_L2 = 'Temperature_gradient_magnitude'
     darcy_x = 'Total_Darcy_velocity_field,_x-component'
     darcy_y = 'Total_Darcy_velocity_field,_y-component'
     darcy_z = 'Total_Darcy_velocity_field,_z-component'
     darcy_total = 'Total_Darcy_velocity_magnitude'
-    s_total = 'Total_Entropy Production Rate,_W/(K*m^3*s)'
-    s_therm = 'Thermal_Entropy Production Rate,_W/(K*m^3*s)'
-    s_visc = 'Viscous_Entropy Production Rate,_W/(K*m^3*s)'
+    s_total = 'Total_Entropy Production Rate_W/(K*m^3*s)'
+    s_therm = 'Thermal_Entropy Production Rate'
+    s_visc = 'Viscous_Entropy Production Rate_W/(K*m^3*s)'
+    s_therm_L2 = 'L2_Thermal_Entropy Production Rate_W/(K*m^3*s)'
 
 
 @dataclass
@@ -42,7 +44,6 @@ class COMSOL_VTU():
     """    
     
     vtu_path: Union[Path, str]
-    optional_vtu_paths : Optional[Union[List[Path], Path]] = None
     name : Optional[str] = ''
     vtu_pattern =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
     is_clean_mesh : Optional[bool] = True 
@@ -58,18 +59,6 @@ class COMSOL_VTU():
             raise ValueError(f'Given path does not exist: {vtu_path}.')
         return vtu_path
     
-    @field_validator("optional_vtu_paths")
-    @classmethod
-    def check_opt_path_exists(cls, vtu_path: Union[List[Path], Path]) -> List[Path]:#
-        if vtu_path is None:
-            return None
-        vtu_path = ensure_pathlib_path(vtu_path)
-        if not isinstance(vtu_path, list):
-            vtu_path = [vtu_path]
-        if not all([path.exists() for path in vtu_path]):
-            raise ValueError('Given paths in optional vtu path does not exist')
-        return vtu_path 
-    
     def __post_init__(self):
         logging.debug('Reading vtu file...')
         self.mesh = pv.read(self.vtu_path)
@@ -79,14 +68,6 @@ class COMSOL_VTU():
         time_pattern = r"@_t=([\d.]+(?:[Ee][+-]?\d+)?)" # find exported time steps
         field_pattern = r"^(.*?)_@_t"                    # find exported fields
         self.exported_fields, self.times = read_comsol_fields(self.mesh, field_pattern, time_pattern)
-        if self.optional_vtu_paths is not None:
-            for path in self.optional_vtu_paths:
-                temp_mesh = pv.read(path)
-                temp_exported_fields, temp_times = read_comsol_fields(temp_mesh, field_pattern, time_pattern)
-                assert set(temp_exported_fields).issubset(set(self.exported_fields))
-                assert self.mesh.points.shape == temp_mesh.points.shape
-                self.times.update(temp_times)
-                self.mesh.point_data.update(temp_mesh.point_data)
 
     def info(self):
         print(f'{self.vtu_path=}')
@@ -105,6 +86,7 @@ class COMSOL_VTU():
         
         Keyword Args:
             is_diff (bool, optional): Subtract the value at the first time index from every iteration. Defaults to False.
+            is_log (bool, optional): log10 display 
             is_ind_cmap (bool, optional): Display an individual colormap for each iteration. Defaults to False.
             t_grad (float, optional): Temperature gradient in the z-direction that is subtracted from every iteration (in [K/m]). 
             movie_field (str, optional): Name of the field to display above the colormap in the movie.
@@ -152,8 +134,11 @@ class COMSOL_VTU():
             val0 = t_grad['t0'] - t_grad['t_grad'] * z 
                 
         is_diff = kwargs.pop('is_diff', False)
+        is_log = kwargs.pop('is_log', False)
         if is_diff:
             mesh[movie_field] = val0 - val0
+        elif is_log:
+            mesh[movie_field] = np.log10(val0)
         else:
             mesh[movie_field] = val0
         
@@ -184,6 +169,8 @@ class COMSOL_VTU():
         for idx, (key, time) in tqdm(enumerate(self.times.items(), start = 1), desc=f'Processing frames for {field}', total = len(self.times)):
             if is_diff:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)] - val0
+            elif is_log:
+                mesh[movie_field] = np.log10(mesh[self.vtu_pattern.format(field,key)])
             else:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
             plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s", name='time-label', font_size=14)
@@ -356,7 +343,7 @@ class COMSOL_VTU():
         required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
         missing = [k for k in required_model_keys if k not in model_data]
         if missing:
-            print("Missing keys:", missing)
+            print("Missing keys in 'model_data':", missing)
         
         # Extract time keys for the selected time steps
         time_keys = [list(self.times.keys())[i] for i in time_steps]
