@@ -1,2 +1,3 @@
-from .comsol_classes import COMSOL_VTU
+from .comsol_classes import COMSOL_VTU, ComsolKeyNames
 from .entropy import calculate_S_therm, calculate_S_total, calculate_S_visc, caluclate_entropy_gen_number_isoflux, caluclate_entropy_gen_number_isotherm
+from .helper import calculate_normal, compute_surface_normal_vector, read_comsol_fields

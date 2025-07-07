@@ -4,28 +4,33 @@ from typing import Optional
 import numpy as np  
 from pathlib import Path
 from typing import Union, List
-from enum import Enum
+from enum import StrEnum
 import pyvista as pv
 import logging
+from matplotlib import pyplot as plt
 from tqdm import tqdm
-from .helper import (ModelData,
-                    ensure_pathlib_path,
+from .helper import (ensure_pathlib_path,
                     read_comsol_fields,
                     initilise_plotter)
 from .entropy import (calculate_S_therm,
                       calculate_S_visc)
 
 
-class ComsolKeyNames(Enum):
+class ComsolKeyNames(StrEnum):
     "Temperature_@_t={key}"
     T = 'Temperature' 
     T_grad_x = 'Temperature_gradient,_x-component'
     T_grad_y = 'Temperature_gradient,_y-component'
     T_grad_z = 'Temperature_gradient,_z-component'
+    T_grad_L2 = 'Temperature_gradient_magnitude'
     darcy_x = 'Total_Darcy_velocity_field,_x-component'
     darcy_y = 'Total_Darcy_velocity_field,_y-component'
     darcy_z = 'Total_Darcy_velocity_field,_z-component'
-    s_tol = 'Total_Entropy_CellBased'
+    darcy_total = 'Total_Darcy_velocity_magnitude'
+    s_total = 'Total_Entropy Production Rate_W/(K*m^3*s)'
+    s_therm = 'Thermal_Entropy Production Rate'
+    s_visc = 'Viscous_Entropy Production Rate_W/(K*m^3*s)'
+    s_therm_L2 = 'L2_Thermal_Entropy Production Rate_W/(K*m^3*s)'
 
 
 @dataclass
@@ -39,9 +44,9 @@ class COMSOL_VTU():
     """    
     
     vtu_path: Union[Path, str]
-    optional_vtu_paths : Optional[Union[List[Path], Path]] = None
     name : Optional[str] = ''
     vtu_pattern =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
+    is_clean_mesh : Optional[bool] = True 
 
     class Config:
         arbitrary_types_allowed = True # for numpy etc
@@ -54,33 +59,15 @@ class COMSOL_VTU():
             raise ValueError(f'Given path does not exist: {vtu_path}.')
         return vtu_path
     
-    @field_validator("optional_vtu_paths")
-    @classmethod
-    def check_opt_path_exists(cls, vtu_path: Union[List[Path], Path]) -> List[Path]:#
-        if vtu_path is None:
-            return None
-        vtu_path = ensure_pathlib_path(vtu_path)
-        if not isinstance(vtu_path, list):
-            vtu_path = [vtu_path]
-        if not all([path.exists() for path in vtu_path]):
-            raise ValueError('Given paths in optional vtu path does not exist')
-        return vtu_path 
-    
     def __post_init__(self):
         logging.debug('Reading vtu file...')
         self.mesh = pv.read(self.vtu_path)
+        if self.is_clean_mesh:
+            self.mesh = self.mesh.clean()
         logging.debug('Finished')
         time_pattern = r"@_t=([\d.]+(?:[Ee][+-]?\d+)?)" # find exported time steps
         field_pattern = r"^(.*?)_@_t"                    # find exported fields
         self.exported_fields, self.times = read_comsol_fields(self.mesh, field_pattern, time_pattern)
-        if self.optional_vtu_paths is not None:
-            for path in self.optional_vtu_paths:
-                temp_mesh = pv.read(path)
-                temp_exported_fields, temp_times = read_comsol_fields(temp_mesh, field_pattern, time_pattern)
-                assert set(temp_exported_fields).issubset(set(self.exported_fields))
-                assert self.mesh.points.shape == temp_mesh.points.shape
-                self.times.update(temp_times)
-                self.mesh.point_data.update(temp_mesh.point_data)
 
     def info(self):
         print(f'{self.vtu_path=}')
@@ -99,6 +86,7 @@ class COMSOL_VTU():
         
         Keyword Args:
             is_diff (bool, optional): Subtract the value at the first time index from every iteration. Defaults to False.
+            is_log (bool, optional): log10 display 
             is_ind_cmap (bool, optional): Display an individual colormap for each iteration. Defaults to False.
             t_grad (float, optional): Temperature gradient in the z-direction that is subtracted from every iteration (in [K/m]). 
             movie_field (str, optional): Name of the field to display above the colormap in the movie.
@@ -109,10 +97,13 @@ class COMSOL_VTU():
             add_mesh_kwargs (dict): Additional keyword arguments for `pv.add_mesh()`.
             is_min_max (bool, optional): Display min and max values in the colorbar. Defaults to False.
             param_string (str, optional) : Display Parameters
-            
+            title_string (str, optional): Title of the plotter window. Defaults to None.
+            plot_last_frame (bool, optional): If True, the last frame will be saved as a screenshot. Defaults to True.
         Returns:
             _type_: None
         """
+        
+        my_cmap = kwargs.pop("cmap", plt.get_cmap("turbo", 15))
         movie_field = kwargs.pop('movie_field', field + "-mp4")
         if mp4_file is None:
             mp4_file = self.vtu_path.parent.joinpath(f'{self.vtu_path.stem}_{field}.mp4')
@@ -143,13 +134,19 @@ class COMSOL_VTU():
             val0 = t_grad['t0'] - t_grad['t_grad'] * z 
                 
         is_diff = kwargs.pop('is_diff', False)
+        is_log = kwargs.pop('is_log', False)
         if is_diff:
             mesh[movie_field] = val0 - val0
+        elif is_log:
+            mesh[movie_field] = np.log10(val0)
         else:
             mesh[movie_field] = val0
         
         add_mesh_kwargs = kwargs.pop('add_mesh_kwargs', {})
-        actor = plotter.add_mesh(mesh, scalars = movie_field, **add_mesh_kwargs) # The sliced plane
+        actor = plotter.add_mesh(mesh,
+                                 scalars = movie_field,
+                                 cmap=my_cmap,
+                                 **add_mesh_kwargs) # The sliced plane
         plotter.write_frame()
         
         is_ind_cmap = kwargs.pop('is_ind_cmap', False)
@@ -168,12 +165,15 @@ class COMSOL_VTU():
                              color="black", position=max_text_position)
 
         param_string = kwargs.pop("param_string", "")
+        title_string = kwargs.pop("title_string", "")
         for idx, (key, time) in tqdm(enumerate(self.times.items(), start = 1), desc=f'Processing frames for {field}', total = len(self.times)):
             if is_diff:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)] - val0
+            elif is_log:
+                mesh[movie_field] = np.log10(mesh[self.vtu_pattern.format(field,key)])
             else:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
-            plotter.add_text(f"Output {idx}: {time:.3e} s", name='time-label', font_size=16)
+            plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s", name='time-label', font_size=14)
             plotter.add_text(param_string,
                 viewport=True, 
                 position=(0, 0.8),  #"left_edge",
@@ -184,7 +184,10 @@ class COMSOL_VTU():
                 min_text_actor.input = f'Min: {np.min(mesh[movie_field]):.2e}'
                 max_text_actor.input = f'Max: {np.max(mesh[movie_field]):.2e}'
             plotter.write_frame()
-            
+        
+        plot_last_frame  = kwargs.pop('plot_last_frame', False)
+        if plot_last_frame:
+            plotter.screenshot(mp4_file.parent / f'{self.vtu_path.stem}_{field}_lastframe.png')
         plotter.close()
 
 
@@ -228,7 +231,7 @@ class COMSOL_VTU():
         Returns:
             str: Returns formatted field name for fields exported via COMSOL ("field_name_@_time").
         """        
-        assert field_name in self.exported_fields
+        # assert field_name in self.exported_fields
         if isinstance(time, str):
             assert time in self.times.keys()
         if isinstance(time, float):
@@ -289,7 +292,7 @@ class COMSOL_VTU():
         self.mesh.point_data[field_name3D][mask3d] = vals_3d
     
     
-    def get_cell_values(self, time_step :  Union[int, str], field: ComsolKeyNames) -> np.ndarray:
+    def get_cell_values(self, field: ComsolKeyNames, time_step :  Union[int, str]) -> np.ndarray:
         data = self.mesh.point_data_to_cell_data()
         if isinstance(time_step, int):
             key = list(self.times.keys())[time_step]
@@ -311,14 +314,15 @@ class COMSOL_VTU():
         """
         assert field in self.exported_fields, f"{field} not found."
         if is_cell_data:
-            return np.array([self.mesh.cell_data[self.format_field(field, key)] for key in self.times.keys()])        
+            cell_mesh = self.mesh.point_data_to_cell_data() 
+            return np.array([cell_mesh[self.format_field(field, key)] for key in self.times.keys()])        
         return np.array([self.mesh.point_data[self.format_field(field, key)] for key in self.times.keys()])
             
             
     def calculate_total_entropy_per_vol(self,
-                                        model_data: ModelData,
+                                        model_data: dict,
                                         time_steps: Union[list[int],int] = None,
-                                        is_save_as_cell_data: bool = False) -> np.ndarray:
+                                        is_return_as_integration: bool = True) -> np.ndarray:
         """_summary_
 
         Args:
@@ -335,43 +339,52 @@ class COMSOL_VTU():
          # Ensure time_steps is a list
         if isinstance(time_steps, int):
             time_steps = [time_steps]
-            
-        assert max(time_steps) <= len(self.times) and min(time_steps) >= 0
+        
+        required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
+        missing = [k for k in required_model_keys if k not in model_data]
+        if missing:
+            print("Missing keys in 'model_data':", missing)
         
         # Extract time keys for the selected time steps
         time_keys = [list(self.times.keys())[i] for i in time_steps]
         
         # convert to cell data to match cell areas for Integration
-        cell_mesh = self.mesh.point_data_to_cell_data() 
-        
-        cell_sizes = cell_mesh.compute_cell_sizes()
-        if np.sum(cell_sizes['Volume']) == 0:
-            cell_volumes = cell_sizes['Area'] # 2D
-        else:
-            cell_volumes = cell_sizes['Volume'] # 3D
+        temp_mesh = self.mesh.copy() 
+        temp_mesh.clear_data()
         
         # Initialize array for storing integrated entropy values (thermal, viscous)
-        integraded_entropy = np.zeros((len(time_steps), 2))
+
+        if is_return_as_integration:
+            entropy = np.zeros((len(time_steps), 2))
+        else:
+            entropy = np.zeros((len(time_steps), self.mesh.n_points, 2))
+    
         for idx, time_key in enumerate(time_keys):
             logging.debug(f'Time {time_key}')
             
-            temp_gradient = cell_mesh.compute_derivative(scalars=self.vtu_pattern.format(ComsolKeyNames.T.value,time_key)).cell_data['gradient']
+            deriv = self.mesh.compute_derivative(scalars=self.format_field(ComsolKeyNames.T.value,time_key), preference = 'point')
+            temp_gradient = deriv.point_data['gradient']
             # Retrieve Darcy velocities with default handling
-            dary_x = self._get_darcy_data(cell_mesh, ComsolKeyNames.darcy_x, time_key, temp_gradient)
-            dary_y = self._get_darcy_data(cell_mesh, ComsolKeyNames.darcy_y, time_key, temp_gradient)
-            dary_z = self._get_darcy_data(cell_mesh, ComsolKeyNames.darcy_z, time_key, temp_gradient)
         
-            # TODO: replace T0 with temperature field, delete model_data
-            s_therm = calculate_S_therm(model_data.lambda_m , model_data.calculate_T0() , temp_gradient)
-            s_visc  = calculate_S_visc(model_data.mu0, model_data.k_m, model_data.calculate_T0() , [dary_x, dary_y, dary_z])
+            s_therm = calculate_S_therm(model_data['lambda_m'] , model_data['T0'] , temp_gradient)
+            try:
+                s_visc  = calculate_S_visc(model_data['mu0'], model_data['k_m'], model_data['T0'] , self.get_point_values(ComsolKeyNames.darcy_total.value, time_key))
+            except KeyError:
+                # logging.debug(f"Field '{ComsolKeyNames.darcy_total.value}' not found in exported fields. Returning zero viscous entropy.")
+                s_visc = np.zeros_like(s_therm)
             
-            if is_save_as_cell_data:
-                self.mesh.cell_data[self.format_field(ComsolKeyNames.s_tol.value, time_key)] = (s_therm + s_visc).copy()
-        
-            integraded_entropy[idx, 0] = np.sum(s_therm * cell_volumes) 
-            integraded_entropy[idx, 1] = np.sum(s_visc * cell_volumes)
+            if is_return_as_integration:
+                temp_mesh.point_data['s_therm'] = s_therm
+                temp_mesh.point_data['s_visc'] = s_visc
+                integrated = temp_mesh.integrate_data()
+                entropy[idx, 0] = integrated.point_data['s_therm'][0]
+                entropy[idx, 1] = integrated.point_data['s_visc'][0]
+            else:
+                entropy[idx, :, 0] = s_therm
+                entropy[idx, :, 1] = s_visc
             
-        return integraded_entropy
+        return entropy
+    
     
     
     
