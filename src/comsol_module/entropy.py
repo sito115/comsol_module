@@ -16,7 +16,7 @@ def calculate_S_therm(lambda_m : float, T_0 : float, temp_gradient : np.ndarray)
     Returns:
         np.ndarray: entropy generation rate per VOLUME [W/(K * m^3)]
     """
-    return lambda_m / T_0**2 * (temp_gradient[:, 0]**2 + temp_gradient[:, 1]**2 + temp_gradient[:, 2]**2) 
+    return lambda_m / T_0**2 * np.sum(temp_gradient**2, axis=1) 
 
 # @jit
 def calculate_S_visc(mu_f : float, k_tensor : np.ndarray, T_0 : Union[float, np.ndarray], darcy_vel : np.ndarray) -> np.ndarray:
