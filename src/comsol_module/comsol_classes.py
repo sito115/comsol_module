@@ -4,6 +4,7 @@ from typing import Optional
 import numpy as np  
 from pathlib import Path
 from typing import Union
+from enum import StrEnum
 import pyvista as pv
 import logging
 from matplotlib import pyplot as plt
@@ -11,6 +12,31 @@ from tqdm import tqdm
 from .helper import (ensure_pathlib_path,
                     read_comsol_fields,
                     initilise_plotter)
+from .entropy import (calculate_S_therm,
+                      calculate_S_visc)
+
+
+VTU_PATTERN =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
+
+class ComsolKeyNames(StrEnum):
+    "Temperature_@_t={key}"
+    T = 'Temperature' 
+    T_grad_x = 'Temperature_gradient,_x-component'
+    T_grad_y = 'Temperature_gradient,_y-component'
+    T_grad_z = 'Temperature_gradient,_z-component'
+    T_grad_L2 = 'Temperature_gradient_magnitude'
+    k_xx = 'Permeability,_XX-component'
+    k_yy = 'Permeability,_YY-component'
+    k_zz = 'Permeability,_ZZ-component'
+    mu0 = 'Dynamic_viscosity'
+    darcy_x = 'Total_Darcy_velocity_field,_x-component'
+    darcy_y = 'Total_Darcy_velocity_field,_y-component'
+    darcy_z = 'Total_Darcy_velocity_field,_z-component'
+    darcy_total = 'Total_Darcy_velocity_magnitude'
+    s_total = 'Total_Entropy Production Rate_W/(K*m^3*s)'
+    s_therm = 'Thermal_Entropy Production Rate'
+    s_visc = 'Viscous_Entropy Production Rate_W/(K*m^3*s)'
+    s_therm_L2 = 'L2_Thermal_Entropy Production Rate_W/(K*m^3*s)'
 
 
 @dataclass
@@ -18,14 +44,16 @@ class COMSOL_VTU():
     """Class to read exported simulation files from COMSOL.
 
     Attributes:
-        mesh (pv.DataSet): _description_
+        mesh (pv.DataSet): PyVista DataSet containing the mesh and point data.
+        vtu_path (Union[Path, str]): Path to the VTU file.
+        name (Optional[str]): Name of the COMSOL_VTU object.
+        is_clean_mesh (Optional[bool]): Whether to clean the mesh after reading (with `pv.DataSet.clean()`).
+        exported_fields (list(str)): List of all exported field names.
         times (dict(str:float)): Sorted dictionary of exported times. The key corresponds to the exact string in the field name.
-        exported fields (list(str)): All exported field names.
     """    
     
     vtu_path: Union[Path, str]
     name : Optional[str] = ''
-    vtu_pattern =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
     is_clean_mesh : Optional[bool] = True 
 
     class Config:
@@ -50,12 +78,15 @@ class COMSOL_VTU():
         self.exported_fields, self.times = read_comsol_fields(self.mesh, field_pattern, time_pattern)
 
     def info(self):
+        """Prints information about the COMSOL_VTU object, including the path, time steps, mesh bounds, and available fields.
+        """        
         print(f'{self.vtu_path=}')
         print(f'{len(self.times)} timesteps from {min(self.times.values()):.3e} s to {max(self.times.values()):.3e} s')
         print(f'{self.mesh.bounds=}')
         print('Availabe fields in vtu dataset:')
         for idx, field in enumerate(sorted(self.exported_fields), start=1):
             print('\t %d: %s' % (idx, field))
+        
         
     def export_mp4_movie(self, field: str, mp4_file: Path = None, **kwargs) -> None:
         """Exports a mp4 movie.
@@ -106,8 +137,7 @@ class COMSOL_VTU():
             mesh = self.mesh
         
         key0 = next(iter(self.times.keys()))
-        val0 = mesh[self.vtu_pattern.format(field,key0)]
-         
+        val0 = mesh[VTU_PATTERN.format(field,key0)]
         t_grad = kwargs.pop('t_grad', None)
         if t_grad is not None:
             z = mesh.points[:, 2]
@@ -148,11 +178,11 @@ class COMSOL_VTU():
         title_string = kwargs.pop("title_string", "")
         for idx, (key, time) in tqdm(enumerate(self.times.items(), start = 1), desc=f'Processing frames for {field}', total = len(self.times)):
             if is_diff:
-                mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)] - val0
+                mesh[movie_field] = mesh[VTU_PATTERN.format(field,key)] - val0
             elif is_log:
-                mesh[movie_field] = np.log10(mesh[self.vtu_pattern.format(field,key)])
+                mesh[movie_field] = np.log10(mesh[VTU_PATTERN.format(field,key)])
             else:
-                mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
+                mesh[movie_field] = mesh[VTU_PATTERN.format(field,key)]
             plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s", name='time-label', font_size=14)
             plotter.add_text(param_string,
                 viewport=True, 
@@ -187,7 +217,7 @@ class COMSOL_VTU():
             logging.info(f'Time step {key}')
         else:
             key = time_step
-        return self.mesh.point_data[self.vtu_pattern.format(field,key)]
+        return self.mesh.point_data[VTU_PATTERN.format(field,key)]
     
     
     def unify_field(self, field_name:str) -> None:
@@ -197,9 +227,10 @@ class COMSOL_VTU():
         Args:
             field_name (str): 
         """        
-        self.mesh.point_data[field_name] = self.mesh.point_data[self.vtu_pattern.format(field_name, list(self.times.keys())[0])]
+        self.mesh.point_data[field_name] = self.mesh.point_data[VTU_PATTERN.format(field_name, list(self.times.keys())[0])]
         for key in tqdm(self.times.keys(), f"Removing redundant fields '{field_name}'"):
-            self.mesh.point_data.remove(self.vtu_pattern.format(field_name, key))
+            self.mesh.point_data.remove(VTU_PATTERN.format(field_name, key))
+    
     
     def format_field(self, field_name: str, time: Union[str, float, int]) -> str:
         """
@@ -219,7 +250,27 @@ class COMSOL_VTU():
         if isinstance(time, int):
             assert time <= len(self.times)
             time = list(self.times.keys())[time]
-        return self.vtu_pattern.format(field_name, time)
+        return VTU_PATTERN.format(field_name, time)
+    
+    def calculate_total_quantity(self, field_name: str, fields: list[str] = None) -> None:
+        """Calculates L2 norm of given fields.
+
+        Args:
+            fields (list[str]): list of fields to calculate the L2 norm (must be in self.exported_fields)
+            field_name (str): the new field name (will be appended to self.exported_fields)
+        """        
+        
+        if fields is None:
+            fields = ['Total_Darcy_velocity_field,_x-component',
+                    'Total_Darcy_velocity_field,_y-component',
+                    'Total_Darcy_velocity_field,_z-component',]
+        
+        self.exported_fields.append(field_name)
+        for time_key in tqdm(self.times.keys(), desc='Processing...', total = len(self.times)): 
+            quantities = np.zeros((len(fields), len(self.mesh.points)))
+            for i_field, field in enumerate(fields):  # noqa: F402
+                quantities[i_field] = self.mesh.point_data[VTU_PATTERN.format(field, time_key)]
+            self.mesh.point_data[self.format_field(field_name, time_key)] = np.sqrt(np.sum(quantities**2, axis = 0))
         
     
     def overwrite_domain_from_surface(self, surface: pv.DataSet, field_name3D: str, field_name2D: str = 'Color') -> None:
@@ -259,7 +310,7 @@ class COMSOL_VTU():
             logging.info(f'Time step {key}')
         else:
             key = time_step
-        return data.cell_data[self.vtu_pattern.format(field,key)]
+        return data.cell_data[VTU_PATTERN.format(field,key)]
     
     
     def get_array(self, field: str, is_cell_data : bool = False) -> np.ndarray:
@@ -277,6 +328,73 @@ class COMSOL_VTU():
             cell_mesh = self.mesh.point_data_to_cell_data() 
             return np.array([cell_mesh[self.format_field(field, key)] for key in self.times.keys()])        
         return np.array([self.mesh.point_data[self.format_field(field, key)] for key in self.times.keys()])
+            
+            
+    def calculate_total_entropy_per_vol(self,
+                                        model_data: dict,
+                                        time_steps: Union[list[int],int] = None,
+                                        is_return_as_integration: bool = True) -> np.ndarray:
+        """Calculate the total entropy production rate per volume for thermal and viscous contributions.
+
+        Args:
+            model_data (dict): Dictionary containing model parameters ['lambda_m', 'T0', 'mu0', 'k_m']
+            time_steps (Union[list[int],int]): zero-indexed!
+
+        Returns:
+            np.ndarray: [N x 2] Entropy (therm, visc) in  W/(m3 * K * s)
+        """
+        # Default to all time steps if none provided
+        if time_steps is None:
+            time_steps = np.arange(len(self.times))
+        
+         # Ensure time_steps is a list
+        if isinstance(time_steps, int):
+            time_steps = [time_steps]
+        
+        required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
+        missing = [k for k in required_model_keys if k not in model_data]
+        if missing:
+            print("Missing keys in 'model_data':", missing)
+        
+        # Extract time keys for the selected time steps
+        time_keys = [list(self.times.keys())[i] for i in time_steps]
+        
+        # convert to cell data to match cell areas for Integration
+        temp_mesh = self.mesh.copy() 
+        temp_mesh.clear_data()
+        
+        # Initialize array for storing integrated entropy values (thermal, viscous)
+
+        if is_return_as_integration:
+            entropy = np.zeros((len(time_steps), 2))
+        else:
+            entropy = np.zeros((len(time_steps), self.mesh.n_points, 2))
+    
+        for idx, time_key in enumerate(time_keys):
+            logging.debug(f'Time {time_key}')
+            
+            deriv = self.mesh.compute_derivative(scalars=self.format_field(ComsolKeyNames.T.value,time_key), preference = 'point')
+            temp_gradient = deriv.point_data['gradient']
+            # Retrieve Darcy velocities with default handling
+        
+            s_therm = calculate_S_therm(model_data['lambda_m'] , model_data['T0'] , temp_gradient)
+            try:
+                s_visc  = calculate_S_visc(model_data['mu0'], model_data['k_m'], model_data['T0'] , self.get_point_values(ComsolKeyNames.darcy_total.value, time_key))
+            except KeyError:
+                # logging.debug(f"Field '{ComsolKeyNames.darcy_total.value}' not found in exported fields. Returning zero viscous entropy.")
+                s_visc = np.zeros_like(s_therm)
+            
+            if is_return_as_integration:
+                temp_mesh.point_data['s_therm'] = s_therm
+                temp_mesh.point_data['s_visc'] = s_visc
+                integrated = temp_mesh.integrate_data()
+                entropy[idx, 0] = integrated.point_data['s_therm'][0]
+                entropy[idx, 1] = integrated.point_data['s_visc'][0]
+            else:
+                entropy[idx, :, 0] = s_therm
+                entropy[idx, :, 1] = s_visc
+            
+        return entropy
     
     
     def merge_datasets(self, *args) -> None:
@@ -297,11 +415,8 @@ class COMSOL_VTU():
         
         
         
-            
-
-        
+                
 if __name__ == '__main__':
-    
     # Set up basic configuration for logging
     logging.basicConfig(
     level=logging.DEBUG,               # Set the lowest level of logging to capture
