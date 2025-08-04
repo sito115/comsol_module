@@ -12,8 +12,6 @@ from tqdm import tqdm
 from .helper import (ensure_pathlib_path,
                     read_comsol_fields,
                     initilise_plotter)
-from .entropy import (calculate_S_therm,
-                      calculate_S_visc)
 
 # Test-Comment
 class ComsolKeyNames(StrEnum):
