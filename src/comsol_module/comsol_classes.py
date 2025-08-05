@@ -3,7 +3,7 @@ from pydantic.dataclasses import dataclass
 from typing import Optional
 import numpy as np  
 from pathlib import Path
-from typing import Union
+from typing import Union, List
 from enum import StrEnum
 import pyvista as pv
 import logging
@@ -16,8 +16,6 @@ from .entropy import (calculate_S_therm,
                       calculate_S_visc)
 
 
-VTU_PATTERN =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
-
 class ComsolKeyNames(StrEnum):
     "Temperature_@_t={key}"
     T = 'Temperature' 
@@ -25,13 +23,9 @@ class ComsolKeyNames(StrEnum):
     T_grad_y = 'Temperature_gradient,_y-component'
     T_grad_z = 'Temperature_gradient,_z-component'
     T_grad_L2 = 'Temperature_gradient_magnitude'
-    k_xx = 'Permeability,_XX-component'
-    k_yy = 'Permeability,_YY-component'
-    k_zz = 'Permeability,_ZZ-component'
-    mu0 = 'Dynamic_viscosity'
     darcy_x = 'Total_Darcy_velocity_field,_x-component'
     darcy_y = 'Total_Darcy_velocity_field,_y-component'
-    darcy_z = 'Total_Darcy_velocity_field,_z-component'
+    darcy_z = 'Total_Darcy_velocity_field,_z-component',
     darcy_total = 'Total_Darcy_velocity_magnitude'
     s_total = 'Total_Entropy Production Rate_W/(K*m^3*s)'
     s_therm = 'Thermal_Entropy Production Rate'
@@ -44,16 +38,14 @@ class COMSOL_VTU():
     """Class to read exported simulation files from COMSOL.
 
     Attributes:
-        mesh (pv.DataSet): PyVista DataSet containing the mesh and point data.
-        vtu_path (Union[Path, str]): Path to the VTU file.
-        name (Optional[str]): Name of the COMSOL_VTU object.
-        is_clean_mesh (Optional[bool]): Whether to clean the mesh after reading (with `pv.DataSet.clean()`).
-        exported_fields (list(str)): List of all exported field names.
+        mesh (pv.DataSet): _description_
         times (dict(str:float)): Sorted dictionary of exported times. The key corresponds to the exact string in the field name.
+        exported fields (list(str)): All exported field names.
     """    
     
     vtu_path: Union[Path, str]
     name : Optional[str] = ''
+    vtu_pattern =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
     is_clean_mesh : Optional[bool] = True 
 
     class Config:
@@ -78,15 +70,12 @@ class COMSOL_VTU():
         self.exported_fields, self.times = read_comsol_fields(self.mesh, field_pattern, time_pattern)
 
     def info(self):
-        """Prints information about the COMSOL_VTU object, including the path, time steps, mesh bounds, and available fields.
-        """        
         print(f'{self.vtu_path=}')
         print(f'{len(self.times)} timesteps from {min(self.times.values()):.3e} s to {max(self.times.values()):.3e} s')
         print(f'{self.mesh.bounds=}')
         print('Availabe fields in vtu dataset:')
         for idx, field in enumerate(sorted(self.exported_fields), start=1):
             print('\t %d: %s' % (idx, field))
-        
         
     def export_mp4_movie(self, field: str, mp4_file: Path = None, **kwargs) -> None:
         """Exports a mp4 movie.
@@ -119,11 +108,9 @@ class COMSOL_VTU():
         if mp4_file is None:
             mp4_file = self.vtu_path.parent.joinpath(f'{self.vtu_path.stem}_{field}.mp4')
         print('Export path = %s' % str(mp4_file))
-        plotter = initilise_plotter(self.mesh, mp4_file)
+        plotter = initilise_plotter(self.mesh, mp4_file, my_cmap)
 
-        # Add the scalar bar to the plotter
-        plotter.add_scalar_bar(title=movie_field, label_font_size=12, 
-                       position_x=0.2, position_y=0.05)
+
 
         bounds = kwargs.pop('bounds', None)
         normal = kwargs.pop('normal', None)
@@ -137,7 +124,8 @@ class COMSOL_VTU():
             mesh = self.mesh
         
         key0 = next(iter(self.times.keys()))
-        val0 = mesh[VTU_PATTERN.format(field,key0)]
+        val0 = mesh[self.vtu_pattern.format(field,key0)]
+         
         t_grad = kwargs.pop('t_grad', None)
         if t_grad is not None:
             z = mesh.points[:, 2]
@@ -157,6 +145,9 @@ class COMSOL_VTU():
                                  scalars = movie_field,
                                  cmap=my_cmap,
                                  **add_mesh_kwargs) # The sliced plane
+        # Add the scalar bar to the plotter
+        plotter.add_scalar_bar(title=movie_field, label_font_size=12, 
+                       position_x=0.2, position_y=0.05)
         plotter.write_frame()
         
         is_ind_cmap = kwargs.pop('is_ind_cmap', False)
@@ -178,15 +169,16 @@ class COMSOL_VTU():
         title_string = kwargs.pop("title_string", "")
         for idx, (key, time) in tqdm(enumerate(self.times.items(), start = 1), desc=f'Processing frames for {field}', total = len(self.times)):
             if is_diff:
-                mesh[movie_field] = mesh[VTU_PATTERN.format(field,key)] - val0
+                mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)] - val0
             elif is_log:
-                mesh[movie_field] = np.log10(mesh[VTU_PATTERN.format(field,key)])
+                mesh[movie_field] = np.log10(mesh[self.vtu_pattern.format(field,key)])
             else:
-                mesh[movie_field] = mesh[VTU_PATTERN.format(field,key)]
-            plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s", name='time-label', font_size=14)
+                mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
+            plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s",
+                             name='time-label', font_size=14)
             plotter.add_text(param_string,
                 viewport=True, 
-                position=(0, 0.8),  #"left_edge",
+                position=(0, 0.6),  #"left_edge",
                 font_size=14,)
             if is_ind_cmap:
                 actor.mapper.scalar_range = ( np.min(mesh[movie_field]), np.max(mesh[movie_field]) )
@@ -217,7 +209,7 @@ class COMSOL_VTU():
             logging.info(f'Time step {key}')
         else:
             key = time_step
-        return self.mesh.point_data[VTU_PATTERN.format(field,key)]
+        return self.mesh.point_data[self.vtu_pattern.format(field,key)]
     
     
     def unify_field(self, field_name:str) -> None:
@@ -227,10 +219,9 @@ class COMSOL_VTU():
         Args:
             field_name (str): 
         """        
-        self.mesh.point_data[field_name] = self.mesh.point_data[VTU_PATTERN.format(field_name, list(self.times.keys())[0])]
+        self.mesh.point_data[field_name] = self.mesh.point_data[self.vtu_pattern.format(field_name, list(self.times.keys())[0])]
         for key in tqdm(self.times.keys(), f"Removing redundant fields '{field_name}'"):
-            self.mesh.point_data.remove(VTU_PATTERN.format(field_name, key))
-    
+            self.mesh.point_data.remove(self.vtu_pattern.format(field_name, key))
     
     def format_field(self, field_name: str, time: Union[str, float, int]) -> str:
         """
@@ -250,7 +241,7 @@ class COMSOL_VTU():
         if isinstance(time, int):
             assert time <= len(self.times)
             time = list(self.times.keys())[time]
-        return VTU_PATTERN.format(field_name, time)
+        return self.vtu_pattern.format(field_name, time)
     
     def calculate_total_quantity(self, field_name: str, fields: list[str] = None) -> None:
         """Calculates L2 norm of given fields.
@@ -269,7 +260,7 @@ class COMSOL_VTU():
         for time_key in tqdm(self.times.keys(), desc='Processing...', total = len(self.times)): 
             quantities = np.zeros((len(fields), len(self.mesh.points)))
             for i_field, field in enumerate(fields):  # noqa: F402
-                quantities[i_field] = self.mesh.point_data[VTU_PATTERN.format(field, time_key)]
+                quantities[i_field] = self.mesh.point_data[self.vtu_pattern.format(field, time_key)]
             self.mesh.point_data[self.format_field(field_name, time_key)] = np.sqrt(np.sum(quantities**2, axis = 0))
         
     
@@ -310,7 +301,7 @@ class COMSOL_VTU():
             logging.info(f'Time step {key}')
         else:
             key = time_step
-        return data.cell_data[VTU_PATTERN.format(field,key)]
+        return data.cell_data[self.vtu_pattern.format(field,key)]
     
     
     def get_array(self, field: str, is_cell_data : bool = False) -> np.ndarray:
@@ -334,14 +325,14 @@ class COMSOL_VTU():
                                         model_data: dict,
                                         time_steps: Union[list[int],int] = None,
                                         is_return_as_integration: bool = True) -> np.ndarray:
-        """Calculate the total entropy production rate per volume for thermal and viscous contributions.
+        """_summary_
 
         Args:
-            model_data (dict): Dictionary containing model parameters ['lambda_m', 'T0', 'mu0', 'k_m']
+            model_data (ModelData): _description_
             time_steps (Union[list[int],int]): zero-indexed!
 
         Returns:
-            np.ndarray: [N x 2] Entropy (therm, visc) in  W/(m3 * K * s)
+            np.ndarray: [N x 2] Entropy (therm, visc) in  W/(K * s)
         """
         # Default to all time steps if none provided
         if time_steps is None:
@@ -415,8 +406,11 @@ class COMSOL_VTU():
         
         
         
-                
+            
+
+        
 if __name__ == '__main__':
+    
     # Set up basic configuration for logging
     logging.basicConfig(
     level=logging.DEBUG,               # Set the lowest level of logging to capture
