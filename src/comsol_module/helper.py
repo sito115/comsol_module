@@ -109,12 +109,32 @@ def ensure_pathlib_path(path: Union[str,Path, List]) -> Union[List[Path], Path]:
     else:
         return Path(path) if isinstance(path, str) else path
 
-def initilise_plotter(mesh: pv.DataSet, mp4_file: Path) -> pv.Plotter:
+def initilise_plotter(mesh: pv.DataSet, mp4_file: Path, cmap) -> pv.Plotter:
+    b = mesh.bounds # x_min, x_max, y_min, y_max, z_min, z_max
     plotter = pv.Plotter(off_screen=True)
     plotter.open_movie(mp4_file)
-    plotter.add_mesh(mesh.outline_corners())
     plotter.add_axes()
-    plotter.show_bounds(mesh)
+    # plotter.add_mesh(mesh.outline_corners())
+    # plotter.add_ruler(pointa =[b[0], b[2], 0],
+    #               pointb =[b[1], b[2], 0],
+    #               title = 'x [m]',
+    #               flip_range = True,
+    #               label_format = '%g',
+    #             #   number_labels = 12
+    #             )  
+    plotter.add_ruler(pointa =[-1200, b[2], 0],
+                    pointb =[-1200, b[3], 0],
+                    title = 'y [m]',
+                    label_format = '%g',
+                    flip_range = True
+                    # number_labels = 12,
+                    )  
+    plotter.add_ruler(pointa =[-1500, b[3] , 0],
+                    pointb =[-1500, b[3] , b[-2]],
+                    title = 'z [m]',
+                    label_format = '%g',
+                    # number_labels = 12,
+                    ) 
     return plotter
 
 def read_comsol_fields(mesh:pv.DataSet, field_pattern, time_pattern) -> tuple[list[str], dict[str, float]]:
