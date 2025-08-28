@@ -194,22 +194,20 @@ class COMSOL_VTU():
 
 
 
+<<<<<<< HEAD
     def get_point_values(self, field: str, time_step : Union[int, str]) -> np.ndarray:
+=======
+    def get_point_values(self, field_name: str) -> np.ndarray:
+>>>>>>> 2f229a2 (modified get ppoint values)
         """_summary_
 
         Args:
-            field (ComsolKeyNames): _description_
-            time_step (Union[int, str]): _description_
+            field_name (str): _description_
 
         Returns:
             np.ndarray: _description_
-        """        
-        if isinstance(time_step, int):
-            key = list(self.times.keys())[time_step]
-            logging.info(f'Time step {key}')
-        else:
-            key = time_step
-        return self.mesh.point_data[self.vtu_pattern.format(field,key)]
+        """
+        return self.mesh.point_data[field_name]
     
     
     def unify_field(self, field_name:str) -> None:
@@ -328,7 +326,7 @@ class COMSOL_VTU():
         """_summary_
 
         Args:
-            model_data (ModelData): _description_
+            model_data (ModelData): required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
             time_steps (Union[list[int],int]): zero-indexed!
 
         Returns:
