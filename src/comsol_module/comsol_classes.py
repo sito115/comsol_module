@@ -65,9 +65,7 @@ class COMSOL_VTU():
         if self.is_clean_mesh:
             self.mesh = self.mesh.clean()
         logging.debug('Finished')
-        time_pattern = r"@_t=([\d.]+(?:[Ee][+-]?\d+)?)" # find exported time steps
-        field_pattern = r"^(.*?)_@_t"                    # find exported fields
-        self.exported_fields, self.times = read_comsol_fields(self.mesh, field_pattern, time_pattern)
+        self.exported_fields, self.times, self.add_vars_dict = read_comsol_fields(self.mesh)
 
     def info(self):
         print(f'{self.vtu_path=}')
@@ -339,7 +337,7 @@ class COMSOL_VTU():
         required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
         missing = [k for k in required_model_keys if k not in model_data]
         if missing:
-            print("Missing keys in 'model_data':", missing)
+            logging.debug("Missing keys in 'model_data':", missing)
         
         # Extract time keys for the selected time steps
         time_keys = [list(self.times.keys())[i] for i in time_steps]

@@ -137,7 +137,7 @@ def initilise_plotter(mesh: pv.DataSet, mp4_file: Path, cmap) -> pv.Plotter:
                     ) 
     return plotter
 
-def read_comsol_fields(mesh:pv.DataSet, field_pattern, time_pattern) -> tuple[list[str], dict[str, float]]:
+def read_comsol_fields(mesh:pv.DataSet) -> tuple[list[str], dict[str, float], list[dict]]:
     """Field names in COMSOL are FIELDNAME_@_tTIME.
 
     Args:
@@ -149,10 +149,27 @@ def read_comsol_fields(mesh:pv.DataSet, field_pattern, time_pattern) -> tuple[li
     Returns:
         tuple[pv.DataSet,list[str], dict[str, float]]: _description_
     """    
-    # assure that it is a field from COMSOL (usually contains an @)
-    exported_fields : list[str] = list(set([re.search(field_pattern, key).group(1) for key in mesh.point_data.keys() if "@" in key])) 
+
+    times = []
+    add_vars_dict = []
+    exported_fields = []
+    for key in mesh.point_data.keys():
+        name, vars_str = key.split("_@_") 
+
+        vars_list = vars_str.split(",")
+        vars_dict = {}
+        for var in vars_list:
+            if "=" in var:
+                key_val, val = var.split("=")
+                vars_dict[key_val.strip().lstrip("_")] = float(val.strip())       
+                
+        time = vars_dict.pop("t", None)
+        times.append(time)
+        add_vars_dict.append(vars_dict)
+        exported_fields.append(name)
+    
+    exported_fields : list[str] = list(set(exported_fields)) 
     # Sort the times and map them back to the original string values
     # assure that it is a field from COMSOL (usually contains an @)
-    time_map : dict[str:float] = {re.search(time_pattern, key).group(1): float(re.search(time_pattern, key).group(1)) for key in mesh.point_data.keys() if "@" in key}
-    times : dict[str:float]= dict(sorted(time_map.items(), key=lambda x: x[1]))  # Sort by float value
-    return (exported_fields, times)  
+    times : dict[str:float]= {val: float(val) for val in sorted(np.unique(times), key=float)}  # Sort by float value
+    return (exported_fields, times, add_vars_dict)  
