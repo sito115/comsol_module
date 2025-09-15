@@ -25,7 +25,7 @@ class ComsolKeyNames(StrEnum):
     T_grad_L2 = 'Temperature_gradient_magnitude'
     darcy_x = 'Total_Darcy_velocity_field,_x-component'
     darcy_y = 'Total_Darcy_velocity_field,_y-component'
-    darcy_z = 'Total_Darcy_velocity_field,_z-component'
+    darcy_z = 'Total_Darcy_velocity_field,_z-component',
     darcy_total = 'Total_Darcy_velocity_magnitude'
     s_total = 'Total_Entropy Production Rate_W/(K*m^3*s)'
     s_therm = 'Thermal_Entropy Production Rate'
@@ -65,9 +65,7 @@ class COMSOL_VTU():
         if self.is_clean_mesh:
             self.mesh = self.mesh.clean()
         logging.debug('Finished')
-        time_pattern = r"@_t=([\d.]+(?:[Ee][+-]?\d+)?)" # find exported time steps
-        field_pattern = r"^(.*?)_@_t"                    # find exported fields
-        self.exported_fields, self.times = read_comsol_fields(self.mesh, field_pattern, time_pattern)
+        self.exported_fields, self.times, self.add_vars_dict = read_comsol_fields(self.mesh)
 
     def info(self):
         print(f'{self.vtu_path=}')
@@ -108,11 +106,9 @@ class COMSOL_VTU():
         if mp4_file is None:
             mp4_file = self.vtu_path.parent.joinpath(f'{self.vtu_path.stem}_{field}.mp4')
         print('Export path = %s' % str(mp4_file))
-        plotter = initilise_plotter(self.mesh, mp4_file)
+        plotter = initilise_plotter(self.mesh, mp4_file, my_cmap)
 
-        # Add the scalar bar to the plotter
-        plotter.add_scalar_bar(title=movie_field, label_font_size=12, 
-                       position_x=0.2, position_y=0.05)
+
 
         bounds = kwargs.pop('bounds', None)
         normal = kwargs.pop('normal', None)
@@ -147,6 +143,9 @@ class COMSOL_VTU():
                                  scalars = movie_field,
                                  cmap=my_cmap,
                                  **add_mesh_kwargs) # The sliced plane
+        # Add the scalar bar to the plotter
+        plotter.add_scalar_bar(title=movie_field, label_font_size=12, 
+                       position_x=0.2, position_y=0.05)
         plotter.write_frame()
         
         is_ind_cmap = kwargs.pop('is_ind_cmap', False)
@@ -173,10 +172,11 @@ class COMSOL_VTU():
                 mesh[movie_field] = np.log10(mesh[self.vtu_pattern.format(field,key)])
             else:
                 mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
-            plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s", name='time-label', font_size=14)
+            plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s",
+                             name='time-label', font_size=14)
             plotter.add_text(param_string,
                 viewport=True, 
-                position=(0, 0.8),  #"left_edge",
+                position=(0, 0.6),  #"left_edge",
                 font_size=14,)
             if is_ind_cmap:
                 actor.mapper.scalar_range = ( np.min(mesh[movie_field]), np.max(mesh[movie_field]) )
@@ -192,22 +192,16 @@ class COMSOL_VTU():
 
 
 
-    def get_point_values(self, field: ComsolKeyNames, time_step : Union[int, str]) -> np.ndarray:
+    def get_point_values(self, field_name: str) -> np.ndarray:
         """_summary_
 
         Args:
-            field (ComsolKeyNames): _description_
-            time_step (Union[int, str]): _description_
+            field_name (str): _description_
 
         Returns:
             np.ndarray: _description_
-        """        
-        if isinstance(time_step, int):
-            key = list(self.times.keys())[time_step]
-            logging.info(f'Time step {key}')
-        else:
-            key = time_step
-        return self.mesh.point_data[self.vtu_pattern.format(field,key)]
+        """
+        return self.mesh.point_data[field_name]
     
     
     def unify_field(self, field_name:str) -> None:
@@ -326,7 +320,7 @@ class COMSOL_VTU():
         """_summary_
 
         Args:
-            model_data (ModelData): _description_
+            model_data (ModelData): required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
             time_steps (Union[list[int],int]): zero-indexed!
 
         Returns:
@@ -343,7 +337,7 @@ class COMSOL_VTU():
         required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
         missing = [k for k in required_model_keys if k not in model_data]
         if missing:
-            print("Missing keys in 'model_data':", missing)
+            logging.debug("Missing keys in 'model_data':", missing)
         
         # Extract time keys for the selected time steps
         time_keys = [list(self.times.keys())[i] for i in time_steps]
