@@ -61,7 +61,11 @@ def read_comsol_fields(mesh:pv.DataSet) -> tuple[list[str], dict[str, float], li
         for var in vars_list:
             if "=" in var:
                 key_val, val = var.split("=")
-                vars_dict[key_val.strip().lstrip("_")] = float(val.strip())       
+                if key_val != "t":
+                    vars_dict[key_val.strip().lstrip("_")] = float(val.strip())       
+                else:
+                    vars_dict[key_val.strip().lstrip("_")] = val.strip()
+
                 
         time = vars_dict.pop("t", None)
         times.append(time)
@@ -71,5 +75,5 @@ def read_comsol_fields(mesh:pv.DataSet) -> tuple[list[str], dict[str, float], li
     exported_fields : list[str] = list(set(exported_fields)) 
     # Sort the times and map them back to the original string values
     # assure that it is a field from COMSOL (usually contains an @)
-    times : dict[str:float]= {val: float(val) for val in sorted(np.unique(times), key=float)}  # Sort by float value
+    times : dict[str:float]= {str(val): float(val) for val in sorted(np.unique(times), key=float)}  # Sort by float value
     return (exported_fields, times, add_vars_dict)  
