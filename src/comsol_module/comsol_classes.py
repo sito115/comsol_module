@@ -56,24 +56,25 @@ class COMSOL_VTU():
         if self._is_stationary:
             print('Stationary study.')
         else:
-            print(f'{len(self.times)} timesteps from {min(self.times.values()):.3e} s to {max(self.times.values()):.3e}')
+            print('Time-dependent study.')
+            print(f'{len(self.times)} timesteps from {min(self.times.values()):.3e} to {max(self.times.values()):.3e}')
         print(f'{self.mesh.bounds=}')
-        print('Availabe fields in vtu dataset:')
+        print('Available fields in dataset:')
         for idx, field in enumerate(sorted(self.exported_fields), start=1):
             print('\t %d: %s' % (idx, field))
         if self._is_sweep:
-            print(f'Detected Parametric sweep for {self.sweep_keys}')
+            print(f'Detected parametric sweep for {self.sweep_keys}')
             print(f'In total {len(self.sweep_combos)} sweep simulations per parameter.')
         
 
     def get_point_values(self, field_name: str) -> np.ndarray:
-        """_summary_
+        """Get point values for a specific field.
 
         Args:
-            field_name (str): _description_
+            field_name (str): The name of the field.
 
         Returns:
-            np.ndarray: _description_
+            np.ndarray: The point values of the field.
         """
         return self.mesh.point_data[field_name]
     
@@ -154,15 +155,16 @@ class COMSOL_VTU():
         
     def get_array(self, field: ComsolKeyNames) -> np.ndarray:
         """Return numpy matrix of given field name.
-            - For transient studies (N_TIME_STEP x N_POINTS)
-            - For transient studies and sweep (N_TIME_STEP x SWEEP COMBOS x N_POINTS)
+
 
         Args:
             field (ComsolKeyNames): field_name
             is_cell_data (bool, optional): Return cell or point data . Defaults to False.
 
         Returns:
-            np.ndarray: 
+            np.ndarray:
+                - For transient studies (N_TIME_STEP x N_POINTS)
+                - For transient studies and sweep (N_TIME_STEP x SWEEP COMBOS x N_POINTS)
         """
         assert field in self.exported_fields, f"{field} not found."
         if self._is_sweep and not self._is_stationary:
