@@ -1,100 +1,123 @@
 import pyvista as pv
-from typing import Union, List
+from typing import Union, List, Dict, Tuple, Any
 import numpy as np
-from pathlib import Path   
-from enum import StrEnum 
+from pathlib import Path
+from enum import StrEnum
 
-def ensure_pathlib_path(path: Union[str,Path, List]) -> Union[List[Path], Path]:
-    if isinstance(path, List):
+
+def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
+    """Ensure that the input is a Path object or a list of Path objects."""
+    if isinstance(path, list):
         return [Path(v) if not isinstance(v, Path) else v for v in path]
-    else:
-        return Path(path) if isinstance(path, str) else path
+    return Path(path) if isinstance(path, str) else path
 
 
-def read_comsol_fields(mesh:pv.DataSet) -> tuple[list[str], dict[str, float], list[dict]]:
-    """Field names in COMSOL are FIELDNAME_@_tTIME.
-        - For time dependent studies, e.g. "Temperature_@_t=0"
-        - For time dependent sweeps, e.g.  "Temperature_@_t=0,_SH_grad=15,_Sh_grad=15,_host_rho=1500,_host_E=5"
-        - For stationary sweeps, ??? TODO
+def read_comsol_fields(mesh: pv.DataSet) -> Tuple[list[str], dict[str, float], list[str], np.ndarray]:
+    """
+    Parse COMSOL field names from mesh point data.
+    Field names typically follow patterns like:
+    - Time-dependent: "FIELDNAME_@_t=TIME"
+    - Time + Sweep: "FIELDNAME_@_t=TIME,_PARAM1=VAL1,_PARAM2=VAL2"
 
-    Args:
-        mesh (pv.DataSet):
-                               
     Returns:
-        tuple[pv.DataSet,list[str], dict[str, float]]: Tuple with three elements:
-            - list[str] containing exported fields (e.g. Temperature, Pressure, etc.)
-            -  dict[str, float] containing increasing time steps in original string format and respective numerical values
-            -  list[dict] containing additional information of parameters (for sweeps) ordered.
-    """    
+        tuple containing:
+            - list[str]: Exported base field names (e.g., ['Temperature', 'Pressure'])
+            - dict[str, float]: Mapping of time strings to float values.
+            - list[str]: List of sweep parameter keys found.
+            - np.ndarray: Unique combinations of sweep parameter values.
+    """
+    times_raw = []
+    all_vars_dicts = []
+    base_fields = set()
 
-    times = []
-    add_vars_dict = []
-    exported_fields = []
     for key in mesh.point_data.keys():
-        name, vars_str = key.split("_@_") 
+        if "_@_" not in key:
+            continue
+
+        name, vars_str = key.split("_@_", 1)
+        base_fields.add(name)
 
         vars_list = vars_str.split(",")
         vars_dict = {}
         for var in vars_list:
+            var = var.strip()
             if "=" in var:
-                key_val, val = var.split("=")
-                if key_val != "t":
-                    vars_dict[key_val.strip().lstrip("_")] = float(val.strip())       
+                key_val, val_str = var.split("=", 1)
+                key_val = key_val.strip().lstrip("_")
+                val_str = val_str.strip()
+
+                if key_val == "t":
+                    times_raw.append(val_str)
                 else:
-                    times.append(val.strip()) # store time as a str
-        
-        add_vars_dict.append(vars_dict)
-        exported_fields.append(name)
-    
-    exported_fields : list[str] = list(set(exported_fields)) 
+                    try:
+                        vars_dict[key_val] = float(val_str)
+                    except ValueError:
+                        vars_dict[key_val] = val_str
 
-    sweep_keys = list(add_vars_dict[0].keys())
-    if len(sweep_keys) == 0:
-        sweep_combos = sweep_keys = []
-    else:
-        tuples = [tuple(d[k] for k in sweep_keys) for d in add_vars_dict]
-        sweep_combos = np.unique(tuples, axis=0)
+        all_vars_dicts.append(vars_dict)
 
-    times : dict[str:float]= {str(val): float(val) for val in sorted(np.unique(times), key=float)}  # Sort by float value
-    return (exported_fields, times, sweep_keys, sweep_combos)  
+    # Process times: unique, sorted by float value
+    unique_times = sorted(set(times_raw), key=float)
+    times_map = {t: float(t) for t in unique_times}
+
+    # Process sweep parameters
+    sweep_keys = []
+    sweep_combos = np.array([])
+
+    if all_vars_dicts:
+        # Assume all fields have the same sweep keys if any exist
+        # Filter out empty dicts (if some fields aren't part of sweep)
+        non_empty_vars = [d for d in all_vars_dicts if d]
+        if non_empty_vars:
+            sweep_keys = list(non_empty_vars[0].keys())
+            tuples = [tuple(d.get(k) for k in sweep_keys)
+                      for d in non_empty_vars]
+            sweep_combos = np.unique(tuples, axis=0)
+
+    return list(base_fields), times_map, sweep_keys, sweep_combos
 
 
 def get_field_name_pattern(is_stationary: bool, is_sweep: bool) -> str:
-    if is_stationary and is_sweep:
-        raise NotImplementedError('Stationary studies not implemented yed')
-    elif not is_stationary and not is_sweep:
-        field_name_pattern = '{}_@_t={}'  # Temperature_@_t=0
-    elif not is_stationary and is_sweep:
-        field_name_pattern = '{}_@_t={},{}' # 'Temperature_@_t=0,_SH_grad=15,_Sh_grad=15,_host_rho=1500,_host_E=5',
-    elif is_stationary and not is_sweep:
-        raise NotImplementedError('Stationary studies not implemented yed')
-    return field_name_pattern
+    """Return the naming pattern used by COMSOL exports."""
+    if is_stationary:
+        if is_sweep:
+            # TODO: Verify stationary sweep pattern in COMSOL VTU export
+            return '{}_@_{}'
+        return '{}'  # Simple stationary field might not have _@_
+
+    if is_sweep:
+        return '{}_@_t={},{}'  # Name, Time, FormattedSweep
+    return '{}_@_t={}'  # Name, Time
 
 
-def format_value(x, sig=4, sci_threshold=(1e-4, 1e6)):
+def format_value(x: Any, sig: int = 4, sci_threshold: Tuple[float, float] = (1e-4, 1e6)) -> str:
     """
-    Format x with sig significant digits.
-    Use scientific notation if outside sci_threshold.
+    Format a value with significant digits and optional scientific notation.
     """
-    abs_x = abs(x)
+    try:
+        val = float(x)
+    except (ValueError, TypeError):
+        return str(x)
+
+    abs_x = abs(val)
     if abs_x != 0 and (abs_x < sci_threshold[0] or abs_x >= sci_threshold[1]):
-        return f"{x:.{sig}e}"  # scientific
-    else:
-        return f"{x:.{sig}g}"  # general/fixed
-    
+        return f"{val:.{sig}e}"
+    return f"{val:.{sig}g}"
+
 
 def format_sweep_parameters(sweep_keys: List[str], values: np.ndarray) -> str:
+    """Format sweep keys and values into the COMSOL string segment: _k1=v1,_k2=v2..."""
     return ",".join(f"_{k}={format_value(v)}" for k, v in zip(sweep_keys, values))
 
 
 class ComsolKeyNames(StrEnum):
-    "Temperature_@_t={key}"
-    T = 'Temperature' 
-    T_grad_x = 'Temperature_gradient,_x-component'
-    T_grad_y = 'Temperature_gradient,_y-component'
-    T_grad_z = 'Temperature_gradient,_z-component'
-    T_grad_L2 = 'Temperature_gradient_magnitude'
-    darcy_x = 'Total_Darcy_velocity_field,_x-component'
-    darcy_y = 'Total_Darcy_velocity_field,_y-component'
-    darcy_z = 'Total_Darcy_velocity_field,_z-component',
-    darcy_total = 'Total_Darcy_velocity_magnitude'
+    """Standard COMSOL field names for convenience."""
+    T = 'Temperature'
+    T_GRAD_X = 'Temperature_gradient,_x-component'
+    T_GRAD_Y = 'Temperature_gradient,_y-component'
+    T_GRAD_Z = 'Temperature_gradient,_z-component'
+    T_GRAD_MAG = 'Temperature_gradient_magnitude'
+    DARCY_X = 'Total_Darcy_velocity_field,_x-component'
+    DARCY_Y = 'Total_Darcy_velocity_field,_y-component'
+    DARCY_Z = 'Total_Darcy_velocity_field,_z-component'
+    DARCY_MAG = 'Total_Darcy_velocity_magnitude'
