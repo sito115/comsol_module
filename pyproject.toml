@@ -9,6 +9,7 @@ dependencies = [
     "pandas>=2.2.3",
     "pydantic>=2.11.3",
     "pyvista>=0.44.2",
+    "tqdm>=4.67.3",
 ]
 
 [project.optional-dependencies]
