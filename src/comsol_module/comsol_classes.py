@@ -205,40 +205,52 @@ class ComsolVtu:
 
         self.mesh.point_data[field_name_3d][mask_3d] = vals_3d
 
-    def get_array(self, field: str | ComsolKeyNames) -> np.ndarray:
+    def get_array(
+        self,
+        field: str | ComsolKeyNames,
+        is_cell_data: bool = False,
+    ) -> np.ndarray:
         """
-        Assemble field data into a numpy array.
+        Assemble field data into a NumPy array.
 
         Args:
-            field (Union[str, ComsolKeyNames]): Field name to extract.
+            field: Field name to extract.
+            is_cell_data: If True, read from ``mesh.cell_data``.
+                Otherwise read from ``mesh.point_data``.
 
         Returns:
             np.ndarray:
-                - Transient study: (N_TIME_STEPS, N_POINTS)
-                - Transient + Sweep: (N_TIME_STEPS, N_SWEEP_COMBOS, N_POINTS)
+                - Transient study: (N_TIME_STEPS, N_VALUES)
+                - Transient + Sweep: (N_TIME_STEPS, N_SWEEP_COMBOS, N_VALUES)
         """
         if field not in self.exported_fields:
             raise KeyError(f"Field '{field}' not found in exported fields.")
 
+        data = self.mesh.cell_data if is_cell_data else self.mesh.point_data
+        n_values = self.mesh.n_cells if is_cell_data else self.mesh.n_points
+
         if self._is_sweep and not self._is_stationary:
-            shape = (len(self.times), len(self.sweep_combos), self.mesh.n_points)
+            shape = (len(self.times), len(self.sweep_combos), n_values)
             matrix = np.zeros(shape)
+
             for i, time_key in enumerate(self.times.keys()):
                 for j, combo in enumerate(self.sweep_combos):
                     field_key = self.format_field(field, time_key, list(combo))
-                    matrix[i, j] = self.mesh.point_data[field_key]
+                    matrix[i, j] = data[field_key]
+
             return matrix
 
         if not self._is_sweep and not self._is_stationary:
             return np.array(
                 [
-                    self.mesh.point_data[self.format_field(field, key)]
-                    for key in self.times.keys()
+                    data[self.format_field(field, time_key)]
+                    for time_key in self.times.keys()
                 ]
             )
 
         raise NotImplementedError(
-            "get_array currently only supports transient studies (with or without sweeps)."
+            "get_array currently only supports transient studies "
+            "(with or without sweeps)."
         )
 
     def merge_datasets(self, *others: "ComsolVtu") -> None:
