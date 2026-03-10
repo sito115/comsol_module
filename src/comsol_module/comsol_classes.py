@@ -1,16 +1,15 @@
 import logging
-from dataclasses import replace
+from dataclasses import field, replace
 from pathlib import Path
 from typing import Self, cast
 
 import numpy as np
 import pyvista as pv
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
 from .helper import (
     ComsolKeyNames,
-    ensure_pathlib_path,
     format_sweep_parameters,
     get_field_name_pattern,
     read_comsol_fields,
@@ -19,59 +18,71 @@ from .helper import (
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class ComsolVtu:
-    """Class to read and process exported simulation files from COMSOL.
+    """Class to read and process exported simulation files from COMSOL."""
 
-    Attributes:
-        vtu_path (Path): Path to the VTU file.
-        name (str): Optional name for the dataset.
-        is_clean_mesh (bool): Whether to clean the mesh upon loading.
-        mesh (pv.DataSet): The PyVista dataset object.
-        times (dict[str, float]): Sorted dictionary of exported times.
-        exported_fields (list[str]): All exported field names.
-        sweep_keys (list[str]): Names of parametric sweep variables.
-        sweep_combos (np.ndarray): Unique combinations of sweep parameters.
-    """
+    mesh: pv.DataSet
+    vtu_path: Path | str = ""
+    name: str = ""
 
-    vtu_path: Path | str
-    name: str | None = ""
-    is_clean_mesh: bool = False
+    exported_fields: list[str] = field(default_factory=list)
+    times: dict[str, float] = field(default_factory=dict)
+    sweep_keys: list[str] = field(default_factory=list)
+    sweep_combos: np.ndarray = field(default_factory=lambda: np.array([]))
 
-    @field_validator("vtu_path", mode="before")
+    _is_sweep: bool = False
+    _is_stationary: bool = False
+    field_pattern: str = ""
+
     @classmethod
-    def check_path_exists(cls, vtu_path: Path | str) -> Path:
-        """Validate that the given path exists."""
-        resolved_path = ensure_pathlib_path(vtu_path)
-        if isinstance(resolved_path, list):
-            # The current implementation of ensure_pathlib_path can return a list
-            # but we expect a single path here.
-            if len(resolved_path) > 0:
-                resolved_path = resolved_path[0]
-            else:
-                raise ValueError("vtu_path resolved to an empty list.")
+    def from_file(cls, path: str | Path, is_clean_mesh: bool = False) -> Self:
+        path = path if isinstance(path, Path) else Path(path)
 
-        if not resolved_path.exists():
-            raise ValueError(f"Given path does not exist: {resolved_path}.")
-        return resolved_path
+        logging.debug("Reading VTU file...")
+        mesh: pv.DataSet = cast(pv.DataSet, pv.wrap(pv.read(path)))
 
-    def __post_init__(self):
-        logging.debug("Reading vtu file...")
-        self.mesh: pv.DataSet = cast(pv.DataSet, pv.wrap(pv.read(self.vtu_path)))
-        if self.is_clean_mesh:
-            self.mesh = self.mesh.clean()
+        if is_clean_mesh:
+            mesh = mesh.clean()
             logging.info("Mesh cleaned successfully.")
 
-        logging.debug("Finished reading vtu file.")
-        # read_comsol_fields returns 4 values: exported_fields, times, sweep_keys, sweep_combos
-        fields, times, keys, combos = read_comsol_fields(self.mesh)
-        self.exported_fields: list[str] = fields
-        self.times: dict[str, float] = times
-        self.sweep_keys: list[str] = keys
-        self.sweep_combos: np.ndarray = combos
+        logging.debug("Finished reading VTU file.")
 
-        self._is_sweep: bool = len(self.sweep_keys) > 0
-        self._is_stationary: bool = len(self.times) <= 1
-        self.field_pattern: str = get_field_name_pattern(
-            self._is_stationary, self._is_sweep
+        # read_comsol_fields returns:
+        # exported_fields, times, sweep_keys, sweep_combos
+        fields, times, keys, combos = read_comsol_fields(mesh)
+
+        is_sweep = len(keys) > 0
+        is_stationary = len(times) <= 1
+        field_pattern = get_field_name_pattern(is_stationary, is_sweep)
+
+        return cls(
+            vtu_path=path,
+            mesh=mesh,
+            exported_fields=fields,
+            times=times,
+            sweep_keys=keys,
+            sweep_combos=combos,
+            _is_sweep=is_sweep,
+            _is_stationary=is_stationary,
+            field_pattern=field_pattern,
+        )
+
+    @classmethod
+    def from_mesh(cls, mesh: pv.DataSet) -> Self:
+        fields, times, keys, combos = read_comsol_fields(mesh)
+
+        is_sweep = len(keys) > 0
+        is_stationary = len(times) <= 1
+        field_pattern = get_field_name_pattern(is_stationary, is_sweep)
+
+        return cls(
+            mesh=mesh,
+            exported_fields=fields,
+            times=times,
+            sweep_keys=keys,
+            sweep_combos=combos,
+            _is_sweep=is_sweep,
+            _is_stationary=is_stationary,
+            field_pattern=field_pattern,
         )
 
     def __repr__(self) -> str:
@@ -292,4 +303,12 @@ class ComsolVtu:
         self.exported_fields.remove(field_name)
 
     def update_mesh(self, new_mesh: pv.DataSet) -> Self:
+        """Return a copy of the class instance with a new mesh.
+
+        Args:
+            new_mesh (pv.DataSet):
+
+        Returns:
+            Self: ComsolVtu
+        """
         return replace(self, mesh=new_mesh)
