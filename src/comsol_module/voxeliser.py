@@ -1,10 +1,11 @@
-import pyvista as pv
-import numpy as np
+import logging
 from dataclasses import dataclass, field
 from typing import Self
-from tqdm import tqdm
-import logging
+
+import numpy as np
+import pyvista as pv
 from pyvista import VectorLike
+from tqdm import tqdm
 
 logger = logging.getLogger()
 

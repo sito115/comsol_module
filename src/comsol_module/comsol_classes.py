@@ -262,6 +262,9 @@ class ComsolVtu:
                 ]
             )
 
+        if not self._is_sweep and self._is_stationary:
+            return data[field]
+
         raise NotImplementedError(
             "get_array currently only supports transient studies "
             "(with or without sweeps)."
