@@ -1,6 +1,7 @@
 import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Self, cast
 
 import numpy as np
 import pyvista as pv
@@ -33,7 +34,7 @@ class ComsolVtu:
 
     vtu_path: Path | str
     name: str | None = ""
-    is_clean_mesh: bool | None = False
+    is_clean_mesh: bool = False
 
     @field_validator("vtu_path", mode="before")
     @classmethod
@@ -289,3 +290,6 @@ class ComsolVtu:
                 self.mesh.point_data.remove(internal_name)
 
         self.exported_fields.remove(field_name)
+
+    def update_mesh(self, new_mesh: pv.DataSet) -> Self:
+        return replace(self, mesh=new_mesh)
