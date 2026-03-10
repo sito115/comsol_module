@@ -1,8 +1,9 @@
-import pyvista as pv
-from typing import Union, List, Dict, Tuple, Any
-import numpy as np
-from pathlib import Path
 from enum import StrEnum
+from pathlib import Path
+from typing import Any, List, Tuple
+
+import numpy as np
+import pyvista as pv
 
 
 def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
@@ -12,7 +13,9 @@ def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
     return Path(path) if isinstance(path, str) else path
 
 
-def read_comsol_fields(mesh: pv.DataSet) -> Tuple[list[str], dict[str, float], list[str], np.ndarray]:
+def read_comsol_fields(
+    mesh: pv.DataSet,
+) -> Tuple[list[str], dict[str, float], list[str], np.ndarray]:
     """
     Parse COMSOL field names from mesh point data.
     Field names typically follow patterns like:
@@ -70,8 +73,7 @@ def read_comsol_fields(mesh: pv.DataSet) -> Tuple[list[str], dict[str, float], l
         non_empty_vars = [d for d in all_vars_dicts if d]
         if non_empty_vars:
             sweep_keys = list(non_empty_vars[0].keys())
-            tuples = [tuple(d.get(k) for k in sweep_keys)
-                      for d in non_empty_vars]
+            tuples = [tuple(d.get(k) for k in sweep_keys) for d in non_empty_vars]
             sweep_combos = np.unique(tuples, axis=0)
 
     return list(base_fields), times_map, sweep_keys, sweep_combos
@@ -82,15 +84,17 @@ def get_field_name_pattern(is_stationary: bool, is_sweep: bool) -> str:
     if is_stationary:
         if is_sweep:
             # TODO: Verify stationary sweep pattern in COMSOL VTU export
-            return '{}_@_{}'
-        return '{}'  # Simple stationary field might not have _@_
+            return "{}_@_{}"
+        return "{}"  # Simple stationary field might not have _@_
 
     if is_sweep:
-        return '{}_@_t={},{}'  # Name, Time, FormattedSweep
-    return '{}_@_t={}'  # Name, Time
+        return "{}_@_t={},{}"  # Name, Time, FormattedSweep
+    return "{}_@_t={}"  # Name, Time
 
 
-def format_value(x: Any, sig: int = 4, sci_threshold: Tuple[float, float] = (1e-4, 1e6)) -> str:
+def format_value(
+    x: Any, sig: int = 4, sci_threshold: Tuple[float, float] = (1e-4, 1e6)
+) -> str:
     """
     Format a value with significant digits and optional scientific notation.
     """
@@ -112,12 +116,14 @@ def format_sweep_parameters(sweep_keys: List[str], values: np.ndarray) -> str:
 
 class ComsolKeyNames(StrEnum):
     """Standard COMSOL field names for convenience."""
-    T = 'Temperature'
-    T_GRAD_X = 'Temperature_gradient,_x-component'
-    T_GRAD_Y = 'Temperature_gradient,_y-component'
-    T_GRAD_Z = 'Temperature_gradient,_z-component'
-    T_GRAD_MAG = 'Temperature_gradient_magnitude'
-    DARCY_X = 'Total_Darcy_velocity_field,_x-component'
-    DARCY_Y = 'Total_Darcy_velocity_field,_y-component'
-    DARCY_Z = 'Total_Darcy_velocity_field,_z-component'
-    DARCY_MAG = 'Total_Darcy_velocity_magnitude'
+
+    T = "Temperature"
+    T_GRAD_X = "Temperature_gradient,_x-component"
+    T_GRAD_Y = "Temperature_gradient,_y-component"
+    T_GRAD_Z = "Temperature_gradient,_z-component"
+    T_GRAD_MAG = "Temperature_gradient_magnitude"
+    DARCY_X = "Total_Darcy_velocity_field,_x-component"
+    DARCY_Y = "Total_Darcy_velocity_field,_y-component"
+    DARCY_Z = "Total_Darcy_velocity_field,_z-component"
+    DARCY_MAG = "Total_Darcy_velocity_magnitude"
+    P = "Pressure"
