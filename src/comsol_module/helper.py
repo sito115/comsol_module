@@ -14,10 +14,10 @@ def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
 
 
 def read_comsol_fields(
-    mesh: pv.DataSet,
+    mesh: pv.DataSet, is_cell_data: bool
 ) -> Tuple[list[str], dict[str, float], list[str], np.ndarray]:
     """
-    Parse COMSOL field names from mesh point data.
+    Parse COMSOL field names from mesh point or cell data.
     Field names typically follow patterns like:
     - Time-dependent: "FIELDNAME_@_t=TIME"
     - Time + Sweep: "FIELDNAME_@_t=TIME,_PARAM1=VAL1,_PARAM2=VAL2"
@@ -33,7 +33,9 @@ def read_comsol_fields(
     all_vars_dicts = []
     base_fields = set()
 
-    for key in mesh.point_data.keys():
+    keys = mesh.cell_data.keys() if is_cell_data else mesh.point_data.keys()
+
+    for key in keys:
         if "_@_" not in key:
             continue
 

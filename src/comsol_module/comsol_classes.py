@@ -34,7 +34,9 @@ class ComsolVtu:
     field_pattern: str = ""
 
     @classmethod
-    def from_file(cls, path: str | Path, is_clean_mesh: bool = False) -> Self:
+    def from_file(
+        cls, path: str | Path, is_clean_mesh: bool = False, is_cell_data: bool = False
+    ) -> Self:
         path = path if isinstance(path, Path) else Path(path)
 
         logging.debug("Reading VTU file...")
@@ -48,7 +50,7 @@ class ComsolVtu:
 
         # read_comsol_fields returns:
         # exported_fields, times, sweep_keys, sweep_combos
-        fields, times, keys, combos = read_comsol_fields(mesh)
+        fields, times, keys, combos = read_comsol_fields(mesh, is_cell_data)
 
         is_sweep = len(keys) > 0
         is_stationary = len(times) <= 1
@@ -67,8 +69,8 @@ class ComsolVtu:
         )
 
     @classmethod
-    def from_mesh(cls, mesh: pv.DataSet) -> Self:
-        fields, times, keys, combos = read_comsol_fields(mesh)
+    def from_mesh(cls, mesh: pv.DataSet, is_cell_data: bool = False) -> Self:
+        fields, times, keys, combos = read_comsol_fields(mesh, is_cell_data)
 
         is_sweep = len(keys) > 0
         is_stationary = len(times) <= 1
