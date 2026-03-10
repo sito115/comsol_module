@@ -1,421 +1,279 @@
-from pydantic import  field_validator
-from pydantic.dataclasses import dataclass
-from typing import Optional
-import numpy as np  
-from pathlib import Path
-from typing import Union, List
-from enum import StrEnum
-import pyvista as pv
 import logging
-from matplotlib import pyplot as plt
-from tqdm import tqdm
-from .helper import (ensure_pathlib_path,
-                    read_comsol_fields,
-                    initilise_plotter)
-from .entropy import (calculate_S_therm,
-                      calculate_S_visc)
+from pathlib import Path
+from typing import cast
+
+import numpy as np
+import pyvista as pv
+from pydantic import ConfigDict, field_validator
+from pydantic.dataclasses import dataclass
+
+from .helper import (
+    ComsolKeyNames,
+    ensure_pathlib_path,
+    format_sweep_parameters,
+    get_field_name_pattern,
+    read_comsol_fields,
+)
 
 
-class ComsolKeyNames(StrEnum):
-    "Temperature_@_t={key}"
-    T = 'Temperature' 
-    T_grad_x = 'Temperature_gradient,_x-component'
-    T_grad_y = 'Temperature_gradient,_y-component'
-    T_grad_z = 'Temperature_gradient,_z-component'
-    T_grad_L2 = 'Temperature_gradient_magnitude'
-    darcy_x = 'Total_Darcy_velocity_field,_x-component'
-    darcy_y = 'Total_Darcy_velocity_field,_y-component'
-    darcy_z = 'Total_Darcy_velocity_field,_z-component',
-    darcy_total = 'Total_Darcy_velocity_magnitude'
-    s_total = 'Total_Entropy Production Rate_W/(K*m^3*s)'
-    s_therm = 'Thermal_Entropy Production Rate'
-    s_visc = 'Viscous_Entropy Production Rate_W/(K*m^3*s)'
-    s_therm_L2 = 'L2_Thermal_Entropy Production Rate_W/(K*m^3*s)'
-
-
-@dataclass
-class COMSOL_VTU():
-    """Class to read exported simulation files from COMSOL.
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class ComsolVtu:
+    """Class to read and process exported simulation files from COMSOL.
 
     Attributes:
-        mesh (pv.DataSet): _description_
-        times (dict(str:float)): Sorted dictionary of exported times. The key corresponds to the exact string in the field name.
-        exported fields (list(str)): All exported field names.
-    """    
-    
-    vtu_path: Union[Path, str]
-    name : Optional[str] = ''
-    vtu_pattern =  '{}_@_t={}'                # container for finding values in pyvista.DataSet
-    is_clean_mesh : Optional[bool] = True 
+        vtu_path (Path): Path to the VTU file.
+        name (str): Optional name for the dataset.
+        is_clean_mesh (bool): Whether to clean the mesh upon loading.
+        mesh (pv.DataSet): The PyVista dataset object.
+        times (dict[str, float]): Sorted dictionary of exported times.
+        exported_fields (list[str]): All exported field names.
+        sweep_keys (list[str]): Names of parametric sweep variables.
+        sweep_combos (np.ndarray): Unique combinations of sweep parameters.
+    """
 
-    class Config:
-        arbitrary_types_allowed = True # for numpy etc
-    
-    @field_validator("vtu_path")
+    vtu_path: Path | str
+    name: str | None = ""
+    is_clean_mesh: bool | None = False
+
+    @field_validator("vtu_path", mode="before")
     @classmethod
-    def check_path_exists(cls, vtu_path: Union[Path, str]) -> Path:#
-        vtu_path = ensure_pathlib_path(vtu_path)
-        if not vtu_path.exists():
-            raise ValueError(f'Given path does not exist: {vtu_path}.')
-        return vtu_path
-    
+    def check_path_exists(cls, vtu_path: Path | str) -> Path:
+        """Validate that the given path exists."""
+        resolved_path = ensure_pathlib_path(vtu_path)
+        if isinstance(resolved_path, list):
+            # The current implementation of ensure_pathlib_path can return a list
+            # but we expect a single path here.
+            if len(resolved_path) > 0:
+                resolved_path = resolved_path[0]
+            else:
+                raise ValueError("vtu_path resolved to an empty list.")
+
+        if not resolved_path.exists():
+            raise ValueError(f"Given path does not exist: {resolved_path}.")
+        return resolved_path
+
     def __post_init__(self):
-        logging.debug('Reading vtu file...')
-        self.mesh = pv.read(self.vtu_path)
+        logging.debug("Reading vtu file...")
+        self.mesh: pv.DataSet = cast(pv.DataSet, pv.wrap(pv.read(self.vtu_path)))
         if self.is_clean_mesh:
             self.mesh = self.mesh.clean()
-        logging.debug('Finished')
-        self.exported_fields, self.times, self.add_vars_dict = read_comsol_fields(self.mesh)
+            logging.info("Mesh cleaned successfully.")
+
+        logging.debug("Finished reading vtu file.")
+        # read_comsol_fields returns 4 values: exported_fields, times, sweep_keys, sweep_combos
+        fields, times, keys, combos = read_comsol_fields(self.mesh)
+        self.exported_fields: list[str] = fields
+        self.times: dict[str, float] = times
+        self.sweep_keys: list[str] = keys
+        self.sweep_combos: np.ndarray = combos
+
+        self._is_sweep: bool = len(self.sweep_keys) > 0
+        self._is_stationary: bool = len(self.times) <= 1
+        self.field_pattern: str = get_field_name_pattern(
+            self._is_stationary, self._is_sweep
+        )
+
+    def __repr__(self) -> str:
+        return f"ComsolVtu(path='{self.vtu_path}', fields={len(self.exported_fields)})"
 
     def info(self):
-        print(f'{self.vtu_path=}')
-        print(f'{len(self.times)} timesteps from {min(self.times.values()):.3e} s to {max(self.times.values()):.3e} s')
-        print(f'{self.mesh.bounds=}')
-        print('Availabe fields in vtu dataset:')
+        """Print detailed information about the COMSOL dataset."""
+        display_name = self.name or (
+            self.vtu_path.name if isinstance(self.vtu_path, Path) else self.vtu_path
+        )
+        print(f"Dataset: {display_name}")
+        print(f"Path: {self.vtu_path}")
+        print(
+            f"Study Type: {'Stationary' if self._is_stationary else 'Time-dependent'}"
+        )
+
+        if not self._is_stationary:
+            t_values = list(self.times.values())
+            print(
+                f"Timesteps: {len(self.times)} (from {min(t_values):.3e} to {max(t_values):.3e})"
+            )
+
+        print(f"Mesh Bounds: {self.mesh.bounds}")
+        print(f"Points: {self.mesh.n_points}, Cells: {self.mesh.n_cells}")
+
+        print("Available Fields:")
         for idx, field in enumerate(sorted(self.exported_fields), start=1):
-            print('\t %d: %s' % (idx, field))
-        
-    def export_mp4_movie(self, field: str, mp4_file: Path = None, **kwargs) -> None:
-        """Exports a mp4 movie.
+            print(f"  {idx:2d}: {field}")
 
-        Args:
-            field (str): _description_
-            mp4_file (Path, optional): _description_. Defaults to None.
-        
-        Keyword Args:
-            is_diff (bool, optional): Subtract the value at the first time index from every iteration. Defaults to False.
-            is_log (bool, optional): log10 display 
-            is_ind_cmap (bool, optional): Display an individual colormap for each iteration. Defaults to False.
-            t_grad (float, optional): Temperature gradient in the z-direction that is subtracted from every iteration (in [K/m]). 
-            movie_field (str, optional): Name of the field to display above the colormap in the movie.
-            bounds (tuple of float): Tuple of the form (xmin, xmax, ymin, ymax, zmin, zmax) for the clipped array.
-            normal (np.ndarray): Normal vector for the plane to be clipped.
-            origin (np.ndarray): Origin point for the plane to be clipped.
-            mesh_kwargs (dict): Additional keyword arguments for `mesh.clip()` or `mesh.clip_box()`.
-            add_mesh_kwargs (dict): Additional keyword arguments for `pv.add_mesh()`.
-            is_min_max (bool, optional): Display min and max values in the colorbar. Defaults to False.
-            param_string (str, optional) : Display Parameters
-            title_string (str, optional): Title of the plotter window. Defaults to None.
-            plot_last_frame (bool, optional): If True, the last frame will be saved as a screenshot. Defaults to True.
-        Returns:
-            _type_: None
-        """
-        
-        my_cmap = kwargs.pop("cmap", plt.get_cmap("turbo", 15))
-        movie_field = kwargs.pop('movie_field', field + "-mp4")
-        if mp4_file is None:
-            mp4_file = self.vtu_path.parent.joinpath(f'{self.vtu_path.stem}_{field}.mp4')
-        print('Export path = %s' % str(mp4_file))
-        plotter = initilise_plotter(self.mesh, mp4_file, my_cmap)
-
-
-
-        bounds = kwargs.pop('bounds', None)
-        normal = kwargs.pop('normal', None)
-        mesh_kwargs = kwargs.pop('mesh_kwargs', {})
-        if bounds is not None:
-            mesh = self.mesh.clip_box(bounds, **mesh_kwargs)
-        elif normal is not None:
-            origin = kwargs.pop('origin', None)
-            mesh = self.mesh.clip(normal=normal, origin=origin, **mesh_kwargs)
-        else:
-            mesh = self.mesh
-        
-        key0 = next(iter(self.times.keys()))
-        val0 = mesh[self.vtu_pattern.format(field,key0)]
-         
-        t_grad = kwargs.pop('t_grad', None)
-        if t_grad is not None:
-            z = mesh.points[:, 2]
-            val0 = t_grad['t0'] - t_grad['t_grad'] * z 
-                
-        is_diff = kwargs.pop('is_diff', False)
-        is_log = kwargs.pop('is_log', False)
-        if is_diff:
-            mesh[movie_field] = val0 - val0
-        elif is_log:
-            mesh[movie_field] = np.log10(val0)
-        else:
-            mesh[movie_field] = val0
-        
-        add_mesh_kwargs = kwargs.pop('add_mesh_kwargs', {})
-        actor = plotter.add_mesh(mesh,
-                                 scalars = movie_field,
-                                 cmap=my_cmap,
-                                 **add_mesh_kwargs) # The sliced plane
-        # Add the scalar bar to the plotter
-        plotter.add_scalar_bar(title=movie_field, label_font_size=12, 
-                       position_x=0.2, position_y=0.05)
-        plotter.write_frame()
-        
-        is_ind_cmap = kwargs.pop('is_ind_cmap', False)
-        is_min_max = kwargs.pop('is_min_max', False)
-        if is_min_max:
-            win_width, win_height = plotter.render_window.GetSize()
-            x, y = plotter.scalar_bar.GetPosition()
-            width, _ = plotter.scalar_bar.GetPosition2()
-            min_text_position = ((x - 0.1)*win_width, y*win_height) 
-            max_text_position = ((x + width + 0.02)*win_width, y*win_height)
-            fs = plotter.scalar_bar.GetLabelTextProperty().GetFontSize()
-            # label_format = plotter.scalar_bar.GetLabelFormat()
-            min_text_actor = plotter.add_text(f"Min: {np.min(mesh[movie_field]):.2e}", font_size=0.6 * fs,
-                             color="black", position=min_text_position)
-            max_text_actor = plotter.add_text(f"Max: {np.min(mesh[movie_field]):.2e}", font_size=0.6 * fs,
-                             color="black", position=max_text_position)
-
-        param_string = kwargs.pop("param_string", "")
-        title_string = kwargs.pop("title_string", "")
-        for idx, (key, time) in tqdm(enumerate(self.times.items(), start = 1), desc=f'Processing frames for {field}', total = len(self.times)):
-            if is_diff:
-                mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)] - val0
-            elif is_log:
-                mesh[movie_field] = np.log10(mesh[self.vtu_pattern.format(field,key)])
-            else:
-                mesh[movie_field] = mesh[self.vtu_pattern.format(field,key)]
-            plotter.add_text(f"{title_string}Output {idx} @ {time:.3e} s",
-                             name='time-label', font_size=14)
-            plotter.add_text(param_string,
-                viewport=True, 
-                position=(0, 0.6),  #"left_edge",
-                font_size=14,)
-            if is_ind_cmap:
-                actor.mapper.scalar_range = ( np.min(mesh[movie_field]), np.max(mesh[movie_field]) )
-            if is_min_max:
-                min_text_actor.input = f'Min: {np.min(mesh[movie_field]):.2e}'
-                max_text_actor.input = f'Max: {np.max(mesh[movie_field]):.2e}'
-            plotter.write_frame()
-        
-        plot_last_frame  = kwargs.pop('plot_last_frame', False)
-        if plot_last_frame:
-            plotter.screenshot(mp4_file.parent / f'{self.vtu_path.stem}_{field}_lastframe.png')
-        plotter.close()
-
-
+        if self._is_sweep:
+            print(f"Parametric Sweep Detected: {self.sweep_keys}")
+            print(f"Total Sweep Combinations: {len(self.sweep_combos)}")
 
     def get_point_values(self, field_name: str) -> np.ndarray:
-        """_summary_
-
-        Args:
-            field_name (str): _description_
-
-        Returns:
-            np.ndarray: _description_
-        """
+        """Get point data for a specific field name."""
         return self.mesh.point_data[field_name]
-    
-    
-    def unify_field(self, field_name:str) -> None:
-        """Merge all entries from COMSOL into on field.
+
+    def unify_field(self, field_name: str | ComsolKeyNames) -> None:
+        """
+        Merge all entries from COMSOL into one field.
         Useful for quantities that do not change over time to save memory.
-
-        Args:
-            field_name (str): 
-        """        
-        self.mesh.point_data[field_name] = self.mesh.point_data[self.vtu_pattern.format(field_name, list(self.times.keys())[0])]
-        for key in tqdm(self.times.keys(), f"Removing redundant fields '{field_name}'"):
-            self.mesh.point_data.remove(self.vtu_pattern.format(field_name, key))
-    
-    def format_field(self, field_name: str, time: Union[str, float, int]) -> str:
         """
+        if self._is_sweep or self._is_stationary:
+            raise NotImplementedError(
+                "unify_field not yet supported for sweeps or stationary studies."
+            )
 
-        Args:
-            field_name (str): Must be in self.exported_fields
-            time (Union[str, float, int]): Can be a string "1E13", a float 1E13 or the integer index of time series.
+        first_time_key = list(self.times.keys())[0]
+        pattern_field = self.field_pattern.format(field_name, first_time_key)
+        self.mesh.point_data[field_name] = self.mesh.point_data[pattern_field]
 
-        Returns:
-            str: Returns formatted field name for fields exported via COMSOL ("field_name_@_time").
-        """        
-        # assert field_name in self.exported_fields
-        if isinstance(time, str):
-            assert time in self.times.keys()
-        if isinstance(time, float):
-            time = min(self.times, key=lambda k: abs(self.times[k] - time))
-        if isinstance(time, int):
-            assert time <= len(self.times)
-            time = list(self.times.keys())[time]
-        return self.vtu_pattern.format(field_name, time)
-    
-    def calculate_total_quantity(self, field_name: str, fields: list[str] = None) -> None:
-        """Calculates L2 norm of given fields.
-
-        Args:
-            fields (list[str]): list of fields to calculate the L2 norm (must be in self.exported_fields)
-            field_name (str): the new field name (will be appended to self.exported_fields)
-        """        
-        
-        if fields is None:
-            fields = ['Total_Darcy_velocity_field,_x-component',
-                    'Total_Darcy_velocity_field,_y-component',
-                    'Total_Darcy_velocity_field,_z-component',]
-        
-        self.exported_fields.append(field_name)
-        for time_key in tqdm(self.times.keys(), desc='Processing...', total = len(self.times)): 
-            quantities = np.zeros((len(fields), len(self.mesh.points)))
-            for i_field, field in enumerate(fields):  # noqa: F402
-                quantities[i_field] = self.mesh.point_data[self.vtu_pattern.format(field, time_key)]
-            self.mesh.point_data[self.format_field(field_name, time_key)] = np.sqrt(np.sum(quantities**2, axis = 0))
-        
-    
-    def overwrite_domain_from_surface(self, surface: pv.DataSet, field_name3D: str, field_name2D: str = 'Color') -> None:
-        """Can be used, when the 2D surface is a subset of the 3D domain. For example, if a fracture is implemented in Comsol (dl.frac), its Darcy-Velocieties
-        from an export in surface-plot will differ from data Export in 3D domain. This function overwrites the 3D domain with the values from the 2D surface.
-        Args:
-            surface (pv.DataSet): 
-            field_name3D (str): Field name in COMSOL_VTU object in mesh.point_data
-            field_name2D (str, optional): Field name in Surface DataSet. Defaults to 'Color'.
-
-        Returns:
-            _type_: None
-        """
-        assert field_name3D in self.mesh.point_data.keys()
-        assert field_name2D in surface.point_data.keys()
-        
-        # Structured view helper function for comparing elements in surface and domain row-wise
-        def structured_view(arr : np.ndarray) -> np.ndarray:
-            return arr.view([('', arr.dtype)] * arr.shape[1])
-    
-        mask3d = np.isin(structured_view(self.mesh.points), structured_view(surface.points)).flatten()
-        mask2d = np.isin(structured_view(surface.points), structured_view(self.mesh.points)).flatten()
-
-        points_3d_masked = self.mesh.points[mask3d, :]
-        vals_3d = np.zeros((np.sum(mask3d)))
-        for tuple2d, val in zip(surface.points[mask2d, :], surface.point_data[field_name2D][mask2d]):
-            mask = np.all(points_3d_masked == tuple2d, axis=1)
-            vals_3d[mask] = val
-
-        self.mesh.point_data[field_name3D][mask3d] = vals_3d
-    
-    
-    def get_cell_values(self, field: ComsolKeyNames, time_step :  Union[int, str]) -> np.ndarray:
-        data = self.mesh.point_data_to_cell_data()
-        if isinstance(time_step, int):
-            key = list(self.times.keys())[time_step]
-            logging.info(f'Time step {key}')
-        else:
-            key = time_step
-        return data.cell_data[self.vtu_pattern.format(field,key)]
-    
-    
-    def get_array(self, field: ComsolKeyNames, is_cell_data : bool = False) -> np.ndarray:
-        """Return numpy matrix of given field name (N_TIME_STEP x N_POINTS)
-
-        Args:
-            field (ComsolKeyNames): field_name
-            is_cell_data (bool, optional): Return cell or point data . Defaults to False.
-
-        Returns:
-            np.ndarray: 
-        """
-        assert field in self.exported_fields, f"{field} not found."
-        if is_cell_data:
-            cell_mesh = self.mesh.point_data_to_cell_data() 
-            return np.array([cell_mesh[self.format_field(field, key)] for key in self.times.keys()])        
-        return np.array([self.mesh.point_data[self.format_field(field, key)] for key in self.times.keys()])
-            
-            
-    def calculate_total_entropy_per_vol(self,
-                                        model_data: dict,
-                                        time_steps: Union[list[int],int] = None,
-                                        is_return_as_integration: bool = True) -> np.ndarray:
-        """_summary_
-
-        Args:
-            model_data (ModelData): required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
-            time_steps (Union[list[int],int]): zero-indexed!
-
-        Returns:
-            np.ndarray: [N x 2] Entropy (therm, visc) in  W/(K * s)
-        """
-        # Default to all time steps if none provided
-        if time_steps is None:
-            time_steps = np.arange(len(self.times))
-        
-         # Ensure time_steps is a list
-        if isinstance(time_steps, int):
-            time_steps = [time_steps]
-        
-        required_model_keys = ['lambda_m', 'T0', 'mu0', 'k_m']
-        missing = [k for k in required_model_keys if k not in model_data]
-        if missing:
-            logging.debug("Missing keys in 'model_data':", missing)
-        
-        # Extract time keys for the selected time steps
-        time_keys = [list(self.times.keys())[i] for i in time_steps]
-        
-        # convert to cell data to match cell areas for Integration
-        temp_mesh = self.mesh.copy() 
-        temp_mesh.clear_data()
-        
-        # Initialize array for storing integrated entropy values (thermal, viscous)
-
-        if is_return_as_integration:
-            entropy = np.zeros((len(time_steps), 2))
-        else:
-            entropy = np.zeros((len(time_steps), self.mesh.n_points, 2))
-    
-        for idx, time_key in enumerate(time_keys):
-            logging.debug(f'Time {time_key}')
-            
-            deriv = self.mesh.compute_derivative(scalars=self.format_field(ComsolKeyNames.T.value,time_key), preference = 'point')
-            temp_gradient = deriv.point_data['gradient']
-            # Retrieve Darcy velocities with default handling
-        
-            s_therm = calculate_S_therm(model_data['lambda_m'] , model_data['T0'] , temp_gradient)
+        for key in self.times.keys():
             try:
-                s_visc  = calculate_S_visc(model_data['mu0'], model_data['k_m'], model_data['T0'] , self.get_point_values(ComsolKeyNames.darcy_total.value, time_key))
+                self.mesh.point_data.remove(self.field_pattern.format(field_name, key))
             except KeyError:
-                # logging.debug(f"Field '{ComsolKeyNames.darcy_total.value}' not found in exported fields. Returning zero viscous entropy.")
-                s_visc = np.zeros_like(s_therm)
-            
-            if is_return_as_integration:
-                temp_mesh.point_data['s_therm'] = s_therm
-                temp_mesh.point_data['s_visc'] = s_visc
-                integrated = temp_mesh.integrate_data()
-                entropy[idx, 0] = integrated.point_data['s_therm'][0]
-                entropy[idx, 1] = integrated.point_data['s_visc'][0]
-            else:
-                entropy[idx, :, 0] = s_therm
-                entropy[idx, :, 1] = s_visc
-            
-        return entropy
-    
-    
-    
-    
-    def _get_darcy_data(self, cell_mesh: pv.UnstructuredGrid, darcy_key:ComsolKeyNames, time_key, temp_gradient):
-        """Helper function to retrieve Darcy velocity data with default handling."""
-        try:
-            return cell_mesh.cell_data[self.format_field(darcy_key.value, time_key)]
-        except KeyError:
-            return np.zeros((cell_mesh.n_cells, ))
-    
-    
-    def merge_datasets(self, *args) -> None:
-        for arg in args:
-            assert isinstance(arg, COMSOL_VTU)
-            assert set(arg.exported_fields).issubset(set(self.exported_fields))
-            assert self.mesh.points.shape == arg.mesh.points.shape
-            self.times.update(arg.times)
-            self.mesh.point_data.update(arg.mesh.point_data)
-            
-            
-    def delete_field(self, field_name: str):
-        assert field_name in self.exported_fields
-        for time_key in self.times.keys():
-            temp_field_name = self.format_field(field_name, time_key)
-            self.mesh.point_data.remove(temp_field_name)
-        self.exported_fields.remove(field_name)
-        
-        
-        
-            
+                pass
 
-        
-if __name__ == '__main__':
-    
-    # Set up basic configuration for logging
-    logging.basicConfig(
-    level=logging.DEBUG,               # Set the lowest level of logging to capture
-    format='%(asctime)s - %(levelname)s - %(message)s',  # Define the format of log messages
-    )
-    
+    def format_field(
+        self, field_name: str, time: str | float | int, sweep_values: list | None = None
+    ) -> str:
+        """
+        Get the internal COMSOL field name for a given field, time, and sweep combination.
+
+        Args:
+            field_name (str): The base field name.
+            time (Union[str, float, int]): Time string, value, or index.
+            sweep_values (list, optional): Values for the parametric sweep.
+
+        Returns:
+            str: The formatted COMSOL field name.
+        """
+        if isinstance(time, str):
+            if time not in self.times:
+                raise ValueError(f"Time '{time}' not found in dataset.")
+            time_key = time
+        elif isinstance(time, (float, np.floating)):
+            time_key = min(self.times, key=lambda k: abs(self.times[k] - float(time)))
+        elif isinstance(time, (int, np.integer)):
+            if time >= len(self.times):
+                raise IndexError(
+                    f"Time index {time} out of bounds for {len(self.times)} steps."
+                )
+            time_key = list(self.times.keys())[time]
+        else:
+            raise TypeError(f"Unsupported time type: {type(time)}")
+
+        if not self._is_sweep:
+            return self.field_pattern.format(field_name, time_key)
+
+        if sweep_values is None:
+            raise ValueError("sweep_values must be provided for parametric sweeps.")
+
+        if len(sweep_values) != len(self.sweep_keys):
+            raise ValueError(
+                f"Expected {len(self.sweep_keys)} sweep values, got {len(sweep_values)}."
+            )
+
+        formatted_sweep = format_sweep_parameters(
+            self.sweep_keys, np.array(sweep_values)
+        )
+        return self.field_pattern.format(field_name, time_key, formatted_sweep)
+
+    def overwrite_domain_from_surface(
+        self, surface: pv.DataSet, field_name_3d: str, field_name_2d: str = "Color"
+    ) -> None:
+        """
+        Overwrite 3D domain point values with values from a 2D surface subset.
+        """
+        if field_name_3d not in self.mesh.point_data:
+            raise KeyError(f"Field '{field_name_3d}' not found in 3D mesh.")
+        if field_name_2d not in surface.point_data:
+            raise KeyError(f"Field '{field_name_2d}' not found in surface dataset.")
+
+        # Vectorized lookup using point coordinates
+        def structured_view(arr: np.ndarray) -> np.ndarray:
+            return arr.view([("", arr.dtype)] * arr.shape[1])
+
+        view_3d = structured_view(self.mesh.points)
+        view_2d = structured_view(surface.points)
+
+        mask_3d = np.isin(view_3d, view_2d).flatten()
+        points_3d_masked = self.mesh.points[mask_3d]
+
+        # Build mapping for faster lookup
+        vals_3d = np.zeros(np.sum(mask_3d))
+
+        # Simple coordinate-based mapping
+        for i, pt in enumerate(points_3d_masked):
+            idx_2d = np.where(np.all(surface.points == pt, axis=1))[0]
+            if len(idx_2d) > 0:
+                vals_3d[i] = surface.point_data[field_name_2d][idx_2d[0]]
+
+        self.mesh.point_data[field_name_3d][mask_3d] = vals_3d
+
+    def get_array(self, field: str | ComsolKeyNames) -> np.ndarray:
+        """
+        Assemble field data into a numpy array.
+
+        Args:
+            field (Union[str, ComsolKeyNames]): Field name to extract.
+
+        Returns:
+            np.ndarray:
+                - Transient study: (N_TIME_STEPS, N_POINTS)
+                - Transient + Sweep: (N_TIME_STEPS, N_SWEEP_COMBOS, N_POINTS)
+        """
+        if field not in self.exported_fields:
+            raise KeyError(f"Field '{field}' not found in exported fields.")
+
+        if self._is_sweep and not self._is_stationary:
+            shape = (len(self.times), len(self.sweep_combos), self.mesh.n_points)
+            matrix = np.zeros(shape)
+            for i, time_key in enumerate(self.times.keys()):
+                for j, combo in enumerate(self.sweep_combos):
+                    field_key = self.format_field(field, time_key, list(combo))
+                    matrix[i, j] = self.mesh.point_data[field_key]
+            return matrix
+
+        if not self._is_sweep and not self._is_stationary:
+            return np.array(
+                [
+                    self.mesh.point_data[self.format_field(field, key)]
+                    for key in self.times.keys()
+                ]
+            )
+
+        raise NotImplementedError(
+            "get_array currently only supports transient studies (with or without sweeps)."
+        )
+
+    def merge_datasets(self, *others: "ComsolVtu") -> None:
+        """Merge other ComsolVtu datasets into this one."""
+        if self._is_sweep or self._is_stationary:
+            raise NotImplementedError(
+                "merge_datasets not yet supported for sweeps or stationary studies."
+            )
+
+        for other in others:
+            if not isinstance(other, ComsolVtu):
+                raise TypeError(f"Expected ComsolVtu, got {type(other)}")
+
+            # Basic compatibility checks
+            if self.mesh.points.shape != other.mesh.points.shape:
+                raise ValueError("Meshes have different point counts or coordinates.")
+
+            self.times.update(other.times)
+            self.mesh.point_data.update(other.mesh.point_data)
+            # Re-sort times
+            self.times = dict(sorted(self.times.items(), key=lambda x: x[1]))
+
+    def delete_field(self, field_name: str | ComsolKeyNames) -> None:
+        """Delete a field from the mesh and tracking lists."""
+        if field_name not in self.exported_fields:
+            raise KeyError(f"Field '{field_name}' not found.")
+
+        if self._is_sweep or self._is_stationary:
+            raise NotImplementedError(
+                "delete_field not yet supported for sweeps or stationary studies."
+            )
+
+        for time_key in self.times.keys():
+            internal_name = self.format_field(field_name, time_key)
+            if internal_name in self.mesh.point_data:
+                self.mesh.point_data.remove(internal_name)
+
+        self.exported_fields.remove(field_name)

@@ -1,179 +1,129 @@
+from enum import StrEnum
+from pathlib import Path
+from typing import Any, List, Tuple
+
 import numpy as np
 import pyvista as pv
-from typing import Optional, Union, List
-from pydantic import BaseModel
-import scipy
-import re
-from pathlib import Path
-
-def calculate_normal(dip: float, strike: float) -> np.ndarray:
-    """_summary_
-
-    Args:
-        dip (float): deg
-        strike (float): deg
-
-    Returns:
-        tuple[float]: (x_normal, y_normal, z_normal)
-    """
-    dip    = np.deg2rad(dip)
-    strike = np.deg2rad(strike)
-    x_normal = -np.sin(dip)*np.sin(strike) 
-    y_normal =  np.sin(dip)*np.cos(strike)
-    z_normal = -np.cos(dip)
-    return np.array([x_normal, y_normal, z_normal])
-    
-
-class ModelData(BaseModel):
-    alpha: Optional[float] = None
-    rho0: Optional[float] = None
-    c_f: Optional[float] = None
-    T_c: Optional[float] = None
-    T_h: Optional[float] = None
-    H: Optional[float] = None
-    mu0: Optional[float] = None
-    lambda_m: Optional[float] = None  # Allow lambda_m to be a part of the model for easy access after calculation
-    k_m: Optional[Union[float, np.ndarray]] = None 
-    
-    class Config:
-        arbitrary_types_allowed = True  # Allow arbitrary types like np.ndarray
-    
-    
-    def calculate_lambda_m(self, lambda_f, lambda_s, phi) -> float:
-        """ 
-        Calculate the effective thermal conductivity of the porous medium (lambda_m).
-
-        Args:
-            lambda_f (float): Thermal conductivity of the fluid [W/mK].
-            lambda_s (float): Thermal conductivity of the solid phase [W/mK].
-            phi (float): Porosity of the material [-].
-
-        Returns:
-            float: Effective thermal conductivity of the porous medium [W/mK].
-
-        """
-        self.lambda_m = phi * lambda_f + (1 - phi) * lambda_s
-        
-        return self.lambda_m
-    
-    def calculate_T0(self) -> float:
-        return 0.5 * (self.T_c + self.T_h) 
 
 
-    def calculate_rayleigh_number(self) -> float:
-        """
-        Calculate the Rayleigh number for convection in a porous medium.
-        - alpha = Thermal expansion coefficient [1/°C]
-        - rho0 = Density of the fluid [kg/m3]
-        - c_f = Specific heat of the fluid [J/kg/°C]
-        - g = Gravitational constant [m2/s]
-        - delta_T = Temperature difference [K]
-        - K_m = Permeability of the porous material [m2]
-        - H = Box size [m]
-        - mu0 = Viscosity of the fluid [Pa/s]
-        - lambda_m = Effective thermal conductivity of the porous 
-
-        Returns:
-            float: Rayleigh number [-].
-        """
-        
-        for key, val in iter(self):
-            if val is None:
-                raise ValueError(f"Missing value for {key}")
-        
-        rayleigh_number =  self.k_m * self.rho0**2 * self.c_f * scipy.constants.g * self.alpha * (self.T_h - self.T_c) *  self.H / (self.mu0 * self.lambda_m) # 
-        
-        return rayleigh_number
-    
-    
-def compute_surface_normal_vector(bounds: pv.DataSet.bounds) -> np.ndarray:
-    """Computes surface normal vector from the bounds of the 2D surface.
-
-    Args:
-        bounds (pv.DataSet.bounds): _description_
-
-    Returns:
-        np.ndarray: _description_
-    """        
-    point1 = np.array([bounds[1], bounds[2], bounds[4]]) # base point bottom
-    point2 = np.array([bounds[1], bounds[3], bounds[4]]) # lateral extent (y-dir)
-    point3 = np.array([bounds[0], bounds[2], bounds[5]]) # vertical extent (z-dir)
-    vector1 = point2 - point1  
-    vector2 = point3 - point1  
-    return  np.cross(vector1, vector2), point1 # normal vector from crossproduct
-
-
-def ensure_pathlib_path(path: Union[str,Path, List]) -> Union[List[Path], Path]:
-    if isinstance(path, List):
+def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
+    """Ensure that the input is a Path object or a list of Path objects."""
+    if isinstance(path, list):
         return [Path(v) if not isinstance(v, Path) else v for v in path]
-    else:
-        return Path(path) if isinstance(path, str) else path
+    return Path(path) if isinstance(path, str) else path
 
-def initilise_plotter(mesh: pv.DataSet, mp4_file: Path, cmap) -> pv.Plotter:
-    b = mesh.bounds # x_min, x_max, y_min, y_max, z_min, z_max
-    plotter = pv.Plotter(off_screen=True)
-    plotter.open_movie(mp4_file)
-    plotter.add_axes()
-    # plotter.add_mesh(mesh.outline_corners())
-    # plotter.add_ruler(pointa =[b[0], b[2], 0],
-    #               pointb =[b[1], b[2], 0],
-    #               title = 'x [m]',
-    #               flip_range = True,
-    #               label_format = '%g',
-    #             #   number_labels = 12
-    #             )  
-    plotter.add_ruler(pointa =[-1200, b[2], 0],
-                    pointb =[-1200, b[3], 0],
-                    title = 'y [m]',
-                    label_format = '%g',
-                    flip_range = True
-                    # number_labels = 12,
-                    )  
-    plotter.add_ruler(pointa =[-1500, b[3] , 0],
-                    pointb =[-1500, b[3] , b[-2]],
-                    title = 'z [m]',
-                    label_format = '%g',
-                    # number_labels = 12,
-                    ) 
-    return plotter
 
-def read_comsol_fields(mesh:pv.DataSet) -> tuple[list[str], dict[str, float], list[dict]]:
-    """Field names in COMSOL are FIELDNAME_@_tTIME.
-
-    Args:
-        mesh (pv.DataSet): 
-        field_pattern (_type_): regex to find field names in pyvista dataset,
-                               
-        time_pattern (_type_): regex to find time in pyvista dataset,
+def read_comsol_fields(
+    mesh: pv.DataSet,
+) -> Tuple[list[str], dict[str, float], list[str], np.ndarray]:
+    """
+    Parse COMSOL field names from mesh point data.
+    Field names typically follow patterns like:
+    - Time-dependent: "FIELDNAME_@_t=TIME"
+    - Time + Sweep: "FIELDNAME_@_t=TIME,_PARAM1=VAL1,_PARAM2=VAL2"
 
     Returns:
-        tuple[pv.DataSet,list[str], dict[str, float]]: _description_
-    """    
+        tuple containing:
+            - list[str]: Exported base field names (e.g., ['Temperature', 'Pressure'])
+            - dict[str, float]: Mapping of time strings to float values.
+            - list[str]: List of sweep parameter keys found.
+            - np.ndarray: Unique combinations of sweep parameter values.
+    """
+    times_raw = []
+    all_vars_dicts = []
+    base_fields = set()
 
-    times = []
-    add_vars_dict = []
-    exported_fields = []
     for key in mesh.point_data.keys():
-        name, vars_str = key.split("_@_") 
+        if "_@_" not in key:
+            continue
+
+        name, vars_str = key.split("_@_", 1)
+        base_fields.add(name)
 
         vars_list = vars_str.split(",")
         vars_dict = {}
         for var in vars_list:
+            var = var.strip()
             if "=" in var:
-                key_val, val = var.split("=")
-                if key_val != "t":
-                    vars_dict[key_val.strip().lstrip("_")] = float(val.strip())       
-                else:
-                    vars_dict[key_val.strip().lstrip("_")] = val.strip()
+                key_val, val_str = var.split("=", 1)
+                key_val = key_val.strip().lstrip("_")
+                val_str = val_str.strip()
 
-                
-        time = vars_dict.pop("t", None)
-        times.append(time)
-        add_vars_dict.append(vars_dict)
-        exported_fields.append(name)
-    
-    exported_fields : list[str] = list(set(exported_fields)) 
-    # Sort the times and map them back to the original string values
-    # assure that it is a field from COMSOL (usually contains an @)
-    times : dict[str:float]= {str(val): float(val) for val in sorted(np.unique(times), key=float)}  # Sort by float value
-    return (exported_fields, times, add_vars_dict)  
+                if key_val == "t":
+                    times_raw.append(val_str)
+                else:
+                    try:
+                        vars_dict[key_val] = float(val_str)
+                    except ValueError:
+                        vars_dict[key_val] = val_str
+
+        all_vars_dicts.append(vars_dict)
+
+    # Process times: unique, sorted by float value
+    unique_times = sorted(set(times_raw), key=float)
+    times_map = {t: float(t) for t in unique_times}
+
+    # Process sweep parameters
+    sweep_keys = []
+    sweep_combos = np.array([])
+
+    if all_vars_dicts:
+        # Assume all fields have the same sweep keys if any exist
+        # Filter out empty dicts (if some fields aren't part of sweep)
+        non_empty_vars = [d for d in all_vars_dicts if d]
+        if non_empty_vars:
+            sweep_keys = list(non_empty_vars[0].keys())
+            tuples = [tuple(d.get(k) for k in sweep_keys) for d in non_empty_vars]
+            sweep_combos = np.unique(tuples, axis=0)
+
+    return list(base_fields), times_map, sweep_keys, sweep_combos
+
+
+def get_field_name_pattern(is_stationary: bool, is_sweep: bool) -> str:
+    """Return the naming pattern used by COMSOL exports."""
+    if is_stationary:
+        if is_sweep:
+            # TODO: Verify stationary sweep pattern in COMSOL VTU export
+            return "{}_@_{}"
+        return "{}"  # Simple stationary field might not have _@_
+
+    if is_sweep:
+        return "{}_@_t={},{}"  # Name, Time, FormattedSweep
+    return "{}_@_t={}"  # Name, Time
+
+
+def format_value(
+    x: Any, sig: int = 4, sci_threshold: Tuple[float, float] = (1e-4, 1e6)
+) -> str:
+    """
+    Format a value with significant digits and optional scientific notation.
+    """
+    try:
+        val = float(x)
+    except (ValueError, TypeError):
+        return str(x)
+
+    abs_x = abs(val)
+    if abs_x != 0 and (abs_x < sci_threshold[0] or abs_x >= sci_threshold[1]):
+        return f"{val:.{sig}e}"
+    return f"{val:.{sig}g}"
+
+
+def format_sweep_parameters(sweep_keys: List[str], values: np.ndarray) -> str:
+    """Format sweep keys and values into the COMSOL string segment: _k1=v1,_k2=v2..."""
+    return ",".join(f"_{k}={format_value(v)}" for k, v in zip(sweep_keys, values))
+
+
+class ComsolKeyNames(StrEnum):
+    """Standard COMSOL field names for convenience."""
+
+    T = "Temperature"
+    T_GRAD_X = "Temperature_gradient,_x-component"
+    T_GRAD_Y = "Temperature_gradient,_y-component"
+    T_GRAD_Z = "Temperature_gradient,_z-component"
+    T_GRAD_MAG = "Temperature_gradient_magnitude"
+    DARCY_X = "Total_Darcy_velocity_field,_x-component"
+    DARCY_Y = "Total_Darcy_velocity_field,_y-component"
+    DARCY_Z = "Total_Darcy_velocity_field,_z-component"
+    DARCY_MAG = "Total_Darcy_velocity_magnitude"
+    P = "Pressure"
