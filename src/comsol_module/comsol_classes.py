@@ -156,6 +156,9 @@ class ComsolVtu:
         Returns:
             str: The formatted COMSOL field name.
         """
+        if self._is_stationary and not self._is_sweep:
+            return field_name
+
         if isinstance(time, str):
             if time not in self.times:
                 raise ValueError(f"Time '{time}' not found in dataset.")
