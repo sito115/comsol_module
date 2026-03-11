@@ -38,7 +38,7 @@ def read_comsol_fields(
     sweep_combos : np.ndarray
         Unique combinations of sweep parameter values
     """
-
+    invalid_field_names = ["Data"]
     keys = mesh.cell_data.keys() if is_cell_data else mesh.point_data.keys()
 
     base_fields: set[str] = set()
@@ -54,6 +54,10 @@ def read_comsol_fields(
         else:
             name, vars_str = key, ""
 
+        if name in invalid_field_names:
+            raise ValueError(
+                f"{name} is not a valid field name and indicates en empty field name description in Comsol. Please add a field name."
+            )
         base_fields.add(name)
 
         vars_dict = {}
