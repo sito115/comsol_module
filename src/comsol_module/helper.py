@@ -15,7 +15,7 @@ def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
 
 def read_comsol_fields(
     mesh: pv.DataSet,
-) -> Tuple[list[str], dict[str, float], list[str], np.ndarray]:
+) -> tuple[list[str], dict[str, float], list[str], np.ndarray]:
     """
     Parse COMSOL field names from mesh point or cell data.
 
