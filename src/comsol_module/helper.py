@@ -1,9 +1,37 @@
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any
 
 import numpy as np
 import pyvista as pv
+
+
+from numbers import Integral, Real
+
+
+def determine_time_key(time, times: dict[str, float]) -> str:
+    if not times:
+        raise ValueError("Empty times dictionary.")
+
+    keys = list(times.keys())
+
+    if isinstance(time, str):
+        if time not in times:
+            raise ValueError(f"Time '{time}' not found in dataset.")
+        return time
+
+    if isinstance(time, Real) and not isinstance(time, Integral):
+        t = float(time)
+        return min(times, key=lambda k: abs(times[k] - t))
+
+    if isinstance(time, Integral):
+        idx = int(time)
+        if idx < 0 or idx >= len(keys):
+            raise IndexError(
+                f"Time index {idx} out of bounds for {len(keys)} steps.")
+        return keys[idx]
+
+    raise TypeError(f"Unsupported time type: {type(time)}")
 
 
 def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
@@ -110,7 +138,7 @@ def get_field_name_pattern(is_stationary: bool, is_sweep: bool) -> str:
 
 
 def format_value(
-    x: Any, sig: int = 4, sci_threshold: Tuple[float, float] = (1e-4, 1e6)
+    x: Any, sig: int = 4, sci_threshold: tuple[float, float] = (1e-4, 1e6)
 ) -> str:
     """
     Format a value with significant digits and optional scientific notation.
@@ -126,7 +154,7 @@ def format_value(
     return f"{val:.{sig}g}"
 
 
-def format_sweep_parameters(sweep_keys: List[str], values: np.ndarray) -> str:
+def format_sweep_parameters(sweep_keys: list[str], values: np.ndarray) -> str:
     """Format sweep keys and values into the COMSOL string segment: _k1=v1,_k2=v2..."""
     return ",".join(f"_{k}={format_value(v)}" for k, v in zip(sweep_keys, values))
 

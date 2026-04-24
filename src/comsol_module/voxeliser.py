@@ -5,7 +5,7 @@ from typing import Self
 import numpy as np
 import pyvista as pv
 from pyvista import VectorLike
-from tqdm import tqdm
+# from tqdm import tqdm
 
 logger = logging.getLogger()
 
@@ -111,9 +111,7 @@ class Voxel:
         iy = np.searchsorted(self.ys, self.mesh.points[:, 1])
         iz = np.searchsorted(self.zs, self.mesh.points[:, 2])
 
-        for key, vals in tqdm(
-            self.mesh.point_data.items(), total=len(self.mesh.point_data)
-        ):
+        for key, vals in self.mesh.point_data.items():
             cells = np.empty((self.nx, self.ny, self.nz), dtype=vals.dtype)
             cells[ix, iy, iz] = vals
             grid.cell_data[key] = cells.ravel(order="F")

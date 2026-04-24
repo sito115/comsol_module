@@ -3,23 +3,22 @@ from .helper import (
     format_sweep_parameters,
     get_field_name_pattern,
     read_comsol_fields,
+    determine_time_key
 )
 import logging
 import warnings
-from dataclasses import field, replace
+from dataclasses import field, replace, dataclass
 from pathlib import Path
 from typing import Literal, Self, cast
 
 import numpy as np
 import pyvista as pv
-from pydantic import ConfigDict
-from pydantic.dataclasses import dataclass
 
 #: Selector for point-based or cell-based data access on a PyVista mesh.
 DataLocation = Literal["point", "cell"]
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+@dataclass
 class ComsolVtu:
     """Class to read and process exported simulation files from COMSOL."""
 
@@ -204,7 +203,7 @@ class ComsolVtu:
                 pass
 
     def format_field(
-        self, field_name: str, time: str | float | int, sweep_values: list | None = None
+        self, field_name: str, time: str | float | int = 0, sweep_values: list[float | int] | None = None
     ) -> str:
         """
         Get the internal COMSOL field name for a given field, time, and sweep combination.
@@ -217,29 +216,15 @@ class ComsolVtu:
         Returns:
             str: The formatted COMSOL field name.
         """
-        if self._is_stationary and not self._is_sweep:
+        if self._is_stationary and not self._is_sweep:  # Stationary case
             return field_name
 
-        if isinstance(time, str):
-            if time not in self.times:
-                raise ValueError(f"Time '{time}' not found in dataset.")
-            time_key = time
-        elif isinstance(time, (float, np.floating)):
-            time_key = min(self.times, key=lambda k: abs(
-                self.times[k] - float(time)))
-        elif isinstance(time, (int, np.integer)):
-            if time >= len(self.times):
-                raise IndexError(
-                    f"Time index {time} out of bounds for {len(self.times)} steps."
-                )
-            time_key = list(self.times.keys())[time]
-        else:
-            raise TypeError(f"Unsupported time type: {type(time)}")
+        time_key = determine_time_key(time, self.times)  # Non-stationary case
 
-        if not self._is_sweep:
+        if not self._is_sweep:  # Non-sweep case
             return self.field_pattern.format(field_name, time_key)
 
-        if sweep_values is None:
+        if sweep_values is None:  # Sweep case
             raise ValueError(
                 "sweep_values must be provided for parametric sweeps.")
 
