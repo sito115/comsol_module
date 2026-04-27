@@ -1,85 +1,138 @@
-import logging
-from pathlib import Path
-from typing import cast
-
-import numpy as np
-import pyvista as pv
-from pydantic import ConfigDict, field_validator
-from pydantic.dataclasses import dataclass
-
 from .helper import (
     ComsolKeyNames,
-    ensure_pathlib_path,
     format_sweep_parameters,
     get_field_name_pattern,
     read_comsol_fields,
+    determine_time_key
 )
+import logging
+import warnings
+from dataclasses import field, replace, dataclass
+from pathlib import Path
+from typing import Literal, Self, cast
+
+import numpy as np
+import pyvista as pv
+
+#: Selector for point-based or cell-based data access on a PyVista mesh.
+DataLocation = Literal["point", "cell"]
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+@dataclass
 class ComsolVtu:
-    """Class to read and process exported simulation files from COMSOL.
+    """Class to read and process exported simulation files from COMSOL."""
 
-    Attributes:
-        vtu_path (Path): Path to the VTU file.
-        name (str): Optional name for the dataset.
-        is_clean_mesh (bool): Whether to clean the mesh upon loading.
-        mesh (pv.DataSet): The PyVista dataset object.
-        times (dict[str, float]): Sorted dictionary of exported times.
-        exported_fields (list[str]): All exported field names.
-        sweep_keys (list[str]): Names of parametric sweep variables.
-        sweep_combos (np.ndarray): Unique combinations of sweep parameters.
-    """
+    mesh: pv.DataSet
+    vtu_path: Path | str = ""
+    name: str = ""
 
-    vtu_path: Path | str
-    name: str | None = ""
-    is_clean_mesh: bool | None = False
+    exported_fields: list[str] = field(default_factory=list)
+    times: dict[str, float] = field(default_factory=dict)
+    sweep_keys: list[str] = field(default_factory=list)
+    sweep_combos: np.ndarray = field(default_factory=lambda: np.array([]))
 
-    @field_validator("vtu_path", mode="before")
+    _is_sweep: bool = False
+    _is_stationary: bool = False
+    field_pattern: str = ""
+
+    @property
+    def time_keys(self) -> list[str]:
+        return list(self.times.keys())
+
+    @property
+    def time_values(self) -> list[float]:
+        return list(self.times.values())
+
     @classmethod
-    def check_path_exists(cls, vtu_path: Path | str) -> Path:
-        """Validate that the given path exists."""
-        resolved_path = ensure_pathlib_path(vtu_path)
-        if isinstance(resolved_path, list):
-            # The current implementation of ensure_pathlib_path can return a list
-            # but we expect a single path here.
-            if len(resolved_path) > 0:
-                resolved_path = resolved_path[0]
-            else:
-                raise ValueError("vtu_path resolved to an empty list.")
+    def from_file(cls, path: str | Path, is_clean_mesh: bool = False) -> Self:
+        path = path if isinstance(path, Path) else Path(path)
 
-        if not resolved_path.exists():
-            raise ValueError(f"Given path does not exist: {resolved_path}.")
-        return resolved_path
+        logging.debug("Reading VTU file...")
+        mesh: pv.DataSet = cast(pv.DataSet, pv.wrap(pv.read(path)))
 
-    def __post_init__(self):
-        logging.debug("Reading vtu file...")
-        self.mesh: pv.DataSet = cast(pv.DataSet, pv.wrap(pv.read(self.vtu_path)))
-        if self.is_clean_mesh:
-            self.mesh = self.mesh.clean()
+        if is_clean_mesh:
+            mesh = mesh.clean()
             logging.info("Mesh cleaned successfully.")
 
-        logging.debug("Finished reading vtu file.")
-        # read_comsol_fields returns 4 values: exported_fields, times, sweep_keys, sweep_combos
-        fields, times, keys, combos = read_comsol_fields(self.mesh)
-        self.exported_fields: list[str] = fields
-        self.times: dict[str, float] = times
-        self.sweep_keys: list[str] = keys
-        self.sweep_combos: np.ndarray = combos
+        logging.debug("Finished reading VTU file.")
 
-        self._is_sweep: bool = len(self.sweep_keys) > 0
-        self._is_stationary: bool = len(self.times) <= 1
-        self.field_pattern: str = get_field_name_pattern(
-            self._is_stationary, self._is_sweep
+        # read_comsol_fields returns:
+        # exported_fields, times, sweep_keys, sweep_combos
+        fields, times, keys, combos = read_comsol_fields(mesh)
+
+        is_sweep = len(keys) > 0
+        is_stationary = len(times) <= 1
+        field_pattern = get_field_name_pattern(is_stationary, is_sweep)
+
+        return cls(
+            vtu_path=path,
+            mesh=mesh,
+            exported_fields=fields,
+            times=times,
+            sweep_keys=keys,
+            sweep_combos=combos,
+            _is_sweep=is_sweep,
+            _is_stationary=is_stationary,
+            field_pattern=field_pattern,
+        )
+
+    @classmethod
+    def from_mesh(cls, mesh: pv.DataSet) -> Self:
+        fields, times, keys, combos = read_comsol_fields(mesh)
+
+        is_sweep = len(keys) > 0
+        is_stationary = len(times) <= 1
+        field_pattern = get_field_name_pattern(is_stationary, is_sweep)
+
+        return cls(
+            mesh=mesh,
+            exported_fields=fields,
+            times=times,
+            sweep_keys=keys,
+            sweep_combos=combos,
+            _is_sweep=is_sweep,
+            _is_stationary=is_stationary,
+            field_pattern=field_pattern,
         )
 
     def __repr__(self) -> str:
         return f"ComsolVtu(path='{self.vtu_path}', fields={len(self.exported_fields)})"
 
+    def convert_to_cell_data(self, pass_point_data: bool = True):
+        self.mesh = self.mesh.point_data_to_cell_data(
+            pass_point_data=pass_point_data)
+
+    def _data_store(
+        self, location: DataLocation = "point"
+    ) -> pv.DataSetAttributes:
+        """Return the mesh data store for the requested *location*.
+
+        When *location* is ``"cell"``, the mesh is first converted from
+        point data to cell data via
+        :pymeth:`pyvista.DataSet.point_data_to_cell_data` so that all
+        exported fields are available in ``cell_data``.
+
+        Args:
+            location: ``"point"`` (default) or ``"cell"``.
+
+        Returns:
+            The corresponding :class:`pyvista.DataSetAttributes`.
+        """
+        match location:
+            case "cell":
+                return self.mesh.cell_data
+            case "point":
+                return self.mesh.point_data
+
+    def _n_values(self, location: DataLocation = "point") -> int:
+        """Return the number of entries (points or cells) for *location*."""
+        return self.mesh.n_cells if location == "cell" else self.mesh.n_points
+
     def info(self):
         """Print detailed information about the COMSOL dataset."""
         display_name = self.name or (
-            self.vtu_path.name if isinstance(self.vtu_path, Path) else self.vtu_path
+            self.vtu_path.name if isinstance(
+                self.vtu_path, Path) else self.vtu_path
         )
         print(f"Dataset: {display_name}")
         print(f"Path: {self.vtu_path}")
@@ -88,7 +141,7 @@ class ComsolVtu:
         )
 
         if not self._is_stationary:
-            t_values = list(self.times.values())
+            t_values = self.time_values
             print(
                 f"Timesteps: {len(self.times)} (from {min(t_values):.3e} to {max(t_values):.3e})"
             )
@@ -104,32 +157,61 @@ class ComsolVtu:
             print(f"Parametric Sweep Detected: {self.sweep_keys}")
             print(f"Total Sweep Combinations: {len(self.sweep_combos)}")
 
-    def get_point_values(self, field_name: str) -> np.ndarray:
-        """Get point data for a specific field name."""
-        return self.mesh.point_data[field_name]
+    def get_values(
+        self, field_name: str, location: DataLocation = "point"
+    ) -> np.ndarray:
+        """Get data for a specific field name.
 
-    def unify_field(self, field_name: str | ComsolKeyNames) -> None:
+        Args:
+            field_name: Name of the field to retrieve.
+            location: ``"point"`` (default) or ``"cell"``.
         """
-        Merge all entries from COMSOL into one field.
+        return self._data_store(location)[field_name]
+
+    def get_point_values(self, field_name: str) -> np.ndarray:
+        """Get point data for a specific field name.
+
+        .. deprecated::
+            Use :meth:`get_values` instead.
+        """
+        warnings.warn(
+            "get_point_values is deprecated, use get_values(field, location='point') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_values(field_name, location="point")
+
+    def unify_field(
+        self,
+        field_name: str | ComsolKeyNames,
+        location: DataLocation = "point",
+    ) -> None:
+        """Merge all timestep entries for *field_name* into a single field.
+
         Useful for quantities that do not change over time to save memory.
+
+        Args:
+            field_name: Base field name to unify.
+            location: ``"point"`` (default) or ``"cell"``.
         """
         if self._is_sweep or self._is_stationary:
             raise NotImplementedError(
                 "unify_field not yet supported for sweeps or stationary studies."
             )
 
-        first_time_key = list(self.times.keys())[0]
+        data = self._data_store(location)
+        first_time_key = self.time_keys[0]
         pattern_field = self.field_pattern.format(field_name, first_time_key)
-        self.mesh.point_data[field_name] = self.mesh.point_data[pattern_field]
+        data[field_name] = data[pattern_field]
 
         for key in self.times.keys():
             try:
-                self.mesh.point_data.remove(self.field_pattern.format(field_name, key))
+                data.remove(self.field_pattern.format(field_name, key))
             except KeyError:
                 pass
 
     def format_field(
-        self, field_name: str, time: str | float | int, sweep_values: list | None = None
+        self, field_name: str, time: str | float | int, sweep_values: list[float | int] | None = None
     ) -> str:
         """
         Get the internal COMSOL field name for a given field, time, and sweep combination.
@@ -142,26 +224,17 @@ class ComsolVtu:
         Returns:
             str: The formatted COMSOL field name.
         """
-        if isinstance(time, str):
-            if time not in self.times:
-                raise ValueError(f"Time '{time}' not found in dataset.")
-            time_key = time
-        elif isinstance(time, (float, np.floating)):
-            time_key = min(self.times, key=lambda k: abs(self.times[k] - float(time)))
-        elif isinstance(time, (int, np.integer)):
-            if time >= len(self.times):
-                raise IndexError(
-                    f"Time index {time} out of bounds for {len(self.times)} steps."
-                )
-            time_key = list(self.times.keys())[time]
-        else:
-            raise TypeError(f"Unsupported time type: {type(time)}")
+        if self._is_stationary and not self._is_sweep:  # Stationary case, non sweep
+            return field_name
 
-        if not self._is_sweep:
+        time_key = determine_time_key(time, self.times)  # Non-stationary case
+
+        if not self._is_sweep:  # Non-sweep case
             return self.field_pattern.format(field_name, time_key)
 
-        if sweep_values is None:
-            raise ValueError("sweep_values must be provided for parametric sweeps.")
+        if sweep_values is None:  # Sweep case
+            raise ValueError(
+                "sweep_values must be provided for parametric sweeps.")
 
         if len(sweep_values) != len(self.sweep_keys):
             raise ValueError(
@@ -174,15 +247,26 @@ class ComsolVtu:
         return self.field_pattern.format(field_name, time_key, formatted_sweep)
 
     def overwrite_domain_from_surface(
-        self, surface: pv.DataSet, field_name_3d: str, field_name_2d: str = "Color"
+        self,
+        surface: pv.DataSet,
+        field_name_3d: str,
+        field_name_2d: str = "Color",
+        location: DataLocation = "point",
     ) -> None:
+        """Overwrite 3D domain values with values from a 2D surface subset.
+
+        Args:
+            surface: The 2D surface mesh to read from.
+            field_name_3d: Field name in the 3D mesh to overwrite.
+            field_name_2d: Field name in *surface* to read from.
+            location: ``"point"`` (default) or ``"cell"``.
         """
-        Overwrite 3D domain point values with values from a 2D surface subset.
-        """
-        if field_name_3d not in self.mesh.point_data:
+        data = self._data_store(location)
+        if field_name_3d not in data:
             raise KeyError(f"Field '{field_name_3d}' not found in 3D mesh.")
         if field_name_2d not in surface.point_data:
-            raise KeyError(f"Field '{field_name_2d}' not found in surface dataset.")
+            raise KeyError(
+                f"Field '{field_name_2d}' not found in surface dataset.")
 
         # Vectorized lookup using point coordinates
         def structured_view(arr: np.ndarray) -> np.ndarray:
@@ -203,42 +287,56 @@ class ComsolVtu:
             if len(idx_2d) > 0:
                 vals_3d[i] = surface.point_data[field_name_2d][idx_2d[0]]
 
-        self.mesh.point_data[field_name_3d][mask_3d] = vals_3d
+        data[field_name_3d][mask_3d] = vals_3d
 
-    def get_array(self, field: str | ComsolKeyNames) -> np.ndarray:
-        """
-        Assemble field data into a numpy array.
+    def get_array(
+        self,
+        field: str | ComsolKeyNames,
+        location: DataLocation = "point",
+    ) -> np.ndarray:
+        """Assemble field data into a NumPy array.
 
         Args:
-            field (Union[str, ComsolKeyNames]): Field name to extract.
+            field: Field name to extract.
+            location: ``"point"`` (default) or ``"cell"``.
 
         Returns:
             np.ndarray:
-                - Transient study: (N_TIME_STEPS, N_POINTS)
-                - Transient + Sweep: (N_TIME_STEPS, N_SWEEP_COMBOS, N_POINTS)
+            - Stationary study: ``(N_VALUES,)``
+            - Transient study: ``(N_TIME_STEPS, N_VALUES)``
+            - Transient + Sweep: ``(N_TIME_STEPS, N_SWEEP_COMBOS, N_VALUES)``
         """
         if field not in self.exported_fields:
             raise KeyError(f"Field '{field}' not found in exported fields.")
 
+        data = self._data_store(location)
+        n_values = self._n_values(location)
+
         if self._is_sweep and not self._is_stationary:
-            shape = (len(self.times), len(self.sweep_combos), self.mesh.n_points)
+            shape = (len(self.times), len(self.sweep_combos), n_values)
             matrix = np.zeros(shape)
+
             for i, time_key in enumerate(self.times.keys()):
                 for j, combo in enumerate(self.sweep_combos):
                     field_key = self.format_field(field, time_key, list(combo))
-                    matrix[i, j] = self.mesh.point_data[field_key]
+                    matrix[i, j] = data[field_key]
+
             return matrix
 
         if not self._is_sweep and not self._is_stationary:
             return np.array(
                 [
-                    self.mesh.point_data[self.format_field(field, key)]
-                    for key in self.times.keys()
+                    data[self.format_field(field, time_key)]
+                    for time_key in self.times.keys()
                 ]
             )
 
+        if not self._is_sweep and self._is_stationary:
+            return data[field]
+
         raise NotImplementedError(
-            "get_array currently only supports transient studies (with or without sweeps)."
+            "get_array currently only supports transient studies "
+            "(with or without sweeps)."
         )
 
     def merge_datasets(self, *others: "ComsolVtu") -> None:
@@ -254,15 +352,25 @@ class ComsolVtu:
 
             # Basic compatibility checks
             if self.mesh.points.shape != other.mesh.points.shape:
-                raise ValueError("Meshes have different point counts or coordinates.")
+                raise ValueError(
+                    "Meshes have different point counts or coordinates.")
 
             self.times.update(other.times)
             self.mesh.point_data.update(other.mesh.point_data)
             # Re-sort times
             self.times = dict(sorted(self.times.items(), key=lambda x: x[1]))
 
-    def delete_field(self, field_name: str | ComsolKeyNames) -> None:
-        """Delete a field from the mesh and tracking lists."""
+    def delete_field(
+        self,
+        field_name: str | ComsolKeyNames,
+        location: DataLocation = "point",
+    ) -> None:
+        """Delete a field from the mesh and tracking lists.
+
+        Args:
+            field_name: Base field name to delete.
+            location: ``"point"`` (default) or ``"cell"``.
+        """
         if field_name not in self.exported_fields:
             raise KeyError(f"Field '{field_name}' not found.")
 
@@ -271,9 +379,21 @@ class ComsolVtu:
                 "delete_field not yet supported for sweeps or stationary studies."
             )
 
+        data = self._data_store(location)
         for time_key in self.times.keys():
             internal_name = self.format_field(field_name, time_key)
-            if internal_name in self.mesh.point_data:
-                self.mesh.point_data.remove(internal_name)
+            if internal_name in data:
+                data.remove(internal_name)
 
         self.exported_fields.remove(field_name)
+
+    def update_mesh(self, new_mesh: pv.DataSet) -> Self:
+        """Return a copy of the class instance with a new mesh.
+
+        Args:
+            new_mesh (pv.DataSet):
+
+        Returns:
+            Self: ComsolVtu
+        """
+        return replace(self, mesh=new_mesh)
