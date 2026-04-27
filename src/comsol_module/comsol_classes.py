@@ -35,6 +35,14 @@ class ComsolVtu:
     _is_stationary: bool = False
     field_pattern: str = ""
 
+    @property
+    def time_keys(self) -> list[str]:
+        return list(self.times.keys())
+
+    @property
+    def time_values(self) -> list[float]:
+        return list(self.times.values())
+
     @classmethod
     def from_file(cls, path: str | Path, is_clean_mesh: bool = False) -> Self:
         path = path if isinstance(path, Path) else Path(path)
@@ -133,7 +141,7 @@ class ComsolVtu:
         )
 
         if not self._is_stationary:
-            t_values = list(self.times.values())
+            t_values = self.time_values
             print(
                 f"Timesteps: {len(self.times)} (from {min(t_values):.3e} to {max(t_values):.3e})"
             )
@@ -192,7 +200,7 @@ class ComsolVtu:
             )
 
         data = self._data_store(location)
-        first_time_key = list(self.times.keys())[0]
+        first_time_key = self.time_keys[0]
         pattern_field = self.field_pattern.format(field_name, first_time_key)
         data[field_name] = data[pattern_field]
 
@@ -203,7 +211,7 @@ class ComsolVtu:
                 pass
 
     def format_field(
-        self, field_name: str, time: str | float | int = 0, sweep_values: list[float | int] | None = None
+        self, field_name: str, time: str | float | int, sweep_values: list[float | int] | None = None
     ) -> str:
         """
         Get the internal COMSOL field name for a given field, time, and sweep combination.
@@ -216,7 +224,7 @@ class ComsolVtu:
         Returns:
             str: The formatted COMSOL field name.
         """
-        if self._is_stationary and not self._is_sweep:  # Stationary case
+        if self._is_stationary and not self._is_sweep:  # Stationary case, non sweep
             return field_name
 
         time_key = determine_time_key(time, self.times)  # Non-stationary case
