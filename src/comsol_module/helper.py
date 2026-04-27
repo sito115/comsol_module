@@ -6,10 +6,10 @@ import numpy as np
 import pyvista as pv
 
 
-from numbers import Integral, Real
+from numbers import Integral, Real, Number
 
 
-def determine_time_key(time, times: dict[str, float]) -> str:
+def determine_time_key(time: str | Number, times: dict[str, float]) -> str:
     if not times:
         raise ValueError("Empty times dictionary.")
 
@@ -34,7 +34,7 @@ def determine_time_key(time, times: dict[str, float]) -> str:
     raise TypeError(f"Unsupported time type: {type(time)}")
 
 
-def ensure_pathlib_path(path: str | Path | list) -> list[Path] | Path:
+def ensure_pathlib_path(path: str | Path | list[str | Path]) -> list[Path] | Path:
     """Ensure that the input is a Path object or a list of Path objects."""
     if isinstance(path, list):
         return [Path(v) if not isinstance(v, Path) else v for v in path]
@@ -71,7 +71,7 @@ def read_comsol_fields(
 
     base_fields: set[str] = set()
     times_raw: list[str] = []
-    sweep_dicts: list[dict] = []
+    sweep_dicts: list[dict[str, str | Number]] = []
 
     for key in keys:
         # Split base field name and variable string
@@ -88,7 +88,7 @@ def read_comsol_fields(
             )
         base_fields.add(name)
 
-        vars_dict = {}
+        vars_dict: dict[str, str | Number] = {}
         for var in vars_str.split(","):
             if "=" not in var:
                 continue
@@ -138,20 +138,24 @@ def get_field_name_pattern(is_stationary: bool, is_sweep: bool) -> str:
 
 
 def format_value(
-    x: Any, sig: int = 4, sci_threshold: tuple[float, float] = (1e-4, 1e6)
+    x: Any,
+    sig: int = 4,
+    sci_threshold: tuple[float, float] = (1e-4, 1e6),
 ) -> str:
-    """
-    Format a value with significant digits and optional scientific notation.
-    """
+    """Format a value using significant digits, switching to scientific notation when needed."""
+
     try:
         val = float(x)
-    except (ValueError, TypeError):
+    except (TypeError, ValueError):
         return str(x)
 
-    abs_x = abs(val)
-    if abs_x != 0 and (abs_x < sci_threshold[0] or abs_x >= sci_threshold[1]):
-        return f"{val:.{sig}e}"
-    return f"{val:.{sig}g}"
+    lower, upper = sci_threshold
+    abs_val = abs(val)
+
+    use_sci = abs_val and (abs_val < lower or abs_val >= upper)
+
+    fmt = f"{val:.{sig}e}" if use_sci else f"{val:.{sig}g}"
+    return fmt
 
 
 def format_sweep_parameters(sweep_keys: list[str], values: np.ndarray) -> str:
