@@ -294,8 +294,9 @@ class ComsolVtu:
 
         Returns:
             np.ndarray:
-                - Transient study: ``(N_TIME_STEPS, N_VALUES)``
-                - Transient + Sweep: ``(N_TIME_STEPS, N_SWEEP_COMBOS, N_VALUES)``
+            - Stationary study: ``(N_VALUES,)``
+            - Transient study: ``(N_TIME_STEPS, N_VALUES)``
+            - Transient + Sweep: ``(N_TIME_STEPS, N_SWEEP_COMBOS, N_VALUES)``
         """
         if field not in self.exported_fields:
             raise KeyError(f"Field '{field}' not found in exported fields.")
