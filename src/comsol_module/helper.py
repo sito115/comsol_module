@@ -1,12 +1,13 @@
+import logging
 from enum import StrEnum
+from numbers import Integral, Number, Real
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pyvista as pv
 
-
-from numbers import Integral, Real, Number
+logger = logging.getLogger()
 
 
 def determine_time_key(time: str | Number, times: dict[str, float]) -> str:
@@ -27,8 +28,7 @@ def determine_time_key(time: str | Number, times: dict[str, float]) -> str:
     if isinstance(time, Integral):
         idx = int(time)
         if idx < 0 or idx >= len(keys):
-            raise IndexError(
-                f"Time index {idx} out of bounds for {len(keys)} steps.")
+            raise IndexError(f"Time index {idx} out of bounds for {len(keys)} steps.")
         return keys[idx]
 
     raise TypeError(f"Unsupported time type: {type(time)}")
@@ -98,7 +98,10 @@ def read_comsol_fields(
             v = v.strip()
 
             if k == "t":
-                times_raw.append(v)
+                val = v.split("_")
+                if len(val) > 2:
+                    logger.info(f"Duplicate values found for {v}")
+                times_raw.append(val[0])
             else:
                 try:
                     vars_dict[k] = float(v)
