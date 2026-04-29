@@ -5,7 +5,6 @@ Simplified, industrial-strength tests covering Stationary, Transient, and Sweep 
 
 import copy
 import warnings
-
 from typing import cast
 
 import numpy as np
@@ -15,10 +14,10 @@ import pyvista as pv
 from comsol_module import ComsolVtu
 from comsol_module.helper import ComsolKeyNames
 
-
 # ===========================================================================
 # Configuration & Helpers
 # ===========================================================================
+
 
 @pytest.fixture
 def vtu_copy(request):
@@ -31,18 +30,20 @@ def vtu_copy(request):
 # Core Interface Tests (Parameterized)
 # ===========================================================================
 
-def _test_get_arrays(vtu: ComsolVtu):
 
+def _test_get_values(vtu: ComsolVtu):
     sweep_values = vtu.sweep_combos[0] if vtu._is_sweep else None
 
     f = vtu.exported_fields[0]
-    field_name = vtu.format_field(f, 0, sweep_values)
+    field_name = vtu.format_field(f, -1, sweep_values)
     _ = vtu.get_values(field_name)
     field_name = vtu.format_field(
-        f, vtu.time_keys[0] if vtu.time_keys else "0", sweep_values)
+        f, vtu.time_keys[0] if vtu.time_keys else "0", sweep_values
+    )
     _ = vtu.get_values(field_name)
     field_name = vtu.format_field(
-        f, vtu.time_values[0] if vtu.time_values else 0.0, sweep_values)
+        f, vtu.time_values[0] if vtu.time_values else 0.0, sweep_values
+    )
     _ = vtu.get_values(field_name)
 
 
@@ -74,7 +75,7 @@ def test_vtu_basic_interface(vtu_name, request: pytest.FixtureRequest):
     # 3. Data stores
     _test_data_stores(vtu)
 
-    _test_get_arrays(vtu)
+    _test_get_values(vtu)
 
 
 @pytest.mark.parametrize("vtu_name", ["vtu_stationary", "vtu_transient", "vtu_sweep"])
@@ -97,6 +98,7 @@ def test_vtu_mesh_operations(vtu_name, request: pytest.FixtureRequest):
 # ===========================================================================
 # Study-Specific Tests (Stationary)
 # ===========================================================================
+
 
 def test_stationary_properties(vtu_stationary: ComsolVtu):
     vtu = vtu_stationary
@@ -134,6 +136,7 @@ def test_stationary_unsupported_ops(vtu_stationary: ComsolVtu):
 # ===========================================================================
 # Study-Specific Tests (Transient)
 # ===========================================================================
+
 
 def test_transient_properties(vtu_transient: ComsolVtu):
     vtu = vtu_transient
@@ -184,6 +187,7 @@ def test_transient_merge(vtu_transient: ComsolVtu):
 # Study-Specific Tests (Sweep)
 # ===========================================================================
 
+
 def test_sweep_properties(vtu_sweep: ComsolVtu):
     vtu = vtu_sweep
     assert vtu._is_sweep is True
@@ -205,11 +209,11 @@ def test_sweep_get_array(vtu_sweep: ComsolVtu):
 # Feature Tests (Cross-cutting)
 # ===========================================================================
 
+
 def test_deprecated_get_point_values(vtu_stationary: ComsolVtu):
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        res = vtu_stationary.get_point_values(
-            vtu_stationary.exported_fields[0])
+        res = vtu_stationary.get_point_values(vtu_stationary.exported_fields[0])
         assert len(w) > 0
         assert issubclass(w[-1].category, DeprecationWarning)
         assert res.shape == (vtu_stationary.mesh.n_points,)

@@ -27,7 +27,7 @@ def determine_time_key(time: str | Number, times: dict[str, float]) -> str:
 
     if isinstance(time, Integral):
         idx = int(time)
-        if idx < 0 or idx >= len(keys):
+        if abs(idx) >= len(keys):
             raise IndexError(f"Time index {idx} out of bounds for {len(keys)} steps.")
         return keys[idx]
 
