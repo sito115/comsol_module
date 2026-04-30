@@ -1,18 +1,19 @@
-from .helper import (
-    ComsolKeyNames,
-    format_sweep_parameters,
-    get_field_name_pattern,
-    read_comsol_fields,
-    determine_time_key
-)
 import logging
 import warnings
-from dataclasses import field, replace, dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, Self, cast
 
 import numpy as np
 import pyvista as pv
+
+from .helper import (
+    ComsolKeyNames,
+    determine_time_key,
+    format_sweep_parameters,
+    get_field_name_pattern,
+    read_comsol_fields,
+)
 
 #: Selector for point-based or cell-based data access on a PyVista mesh.
 DataLocation = Literal["point", "cell"]
@@ -23,7 +24,7 @@ class ComsolVtu:
     """Class to read and process exported simulation files from COMSOL."""
 
     mesh: pv.DataSet
-    vtu_path: Path | str = ""
+    vtu_path: Path | None = None
     name: str = ""
 
     exported_fields: list[str] = field(default_factory=list)
@@ -99,12 +100,9 @@ class ComsolVtu:
         return f"ComsolVtu(path='{self.vtu_path}', fields={len(self.exported_fields)})"
 
     def convert_to_cell_data(self, pass_point_data: bool = True):
-        self.mesh = self.mesh.point_data_to_cell_data(
-            pass_point_data=pass_point_data)
+        self.mesh = self.mesh.point_data_to_cell_data(pass_point_data=pass_point_data)
 
-    def _data_store(
-        self, location: DataLocation = "point"
-    ) -> pv.DataSetAttributes:
+    def _data_store(self, location: DataLocation = "point") -> pv.DataSetAttributes:
         """Return the mesh data store for the requested *location*.
 
         When *location* is ``"cell"``, the mesh is first converted from
@@ -131,8 +129,7 @@ class ComsolVtu:
     def info(self):
         """Print detailed information about the COMSOL dataset."""
         display_name = self.name or (
-            self.vtu_path.name if isinstance(
-                self.vtu_path, Path) else self.vtu_path
+            self.vtu_path.name if isinstance(self.vtu_path, Path) else self.vtu_path
         )
         print(f"Dataset: {display_name}")
         print(f"Path: {self.vtu_path}")
@@ -211,7 +208,10 @@ class ComsolVtu:
                 pass
 
     def format_field(
-        self, field_name: str, time: str | float | int, sweep_values: list[float | int] | None = None
+        self,
+        field_name: str,
+        time: str | float | int,
+        sweep_values: list[float | int] | None = None,
     ) -> str:
         """
         Get the internal COMSOL field name for a given field, time, and sweep combination.
@@ -233,8 +233,7 @@ class ComsolVtu:
             return self.field_pattern.format(field_name, time_key)
 
         if sweep_values is None:  # Sweep case
-            raise ValueError(
-                "sweep_values must be provided for parametric sweeps.")
+            raise ValueError("sweep_values must be provided for parametric sweeps.")
 
         if len(sweep_values) != len(self.sweep_keys):
             raise ValueError(
@@ -265,8 +264,7 @@ class ComsolVtu:
         if field_name_3d not in data:
             raise KeyError(f"Field '{field_name_3d}' not found in 3D mesh.")
         if field_name_2d not in surface.point_data:
-            raise KeyError(
-                f"Field '{field_name_2d}' not found in surface dataset.")
+            raise KeyError(f"Field '{field_name_2d}' not found in surface dataset.")
 
         # Vectorized lookup using point coordinates
         def structured_view(arr: np.ndarray) -> np.ndarray:
@@ -352,8 +350,7 @@ class ComsolVtu:
 
             # Basic compatibility checks
             if self.mesh.points.shape != other.mesh.points.shape:
-                raise ValueError(
-                    "Meshes have different point counts or coordinates.")
+                raise ValueError("Meshes have different point counts or coordinates.")
 
             self.times.update(other.times)
             self.mesh.point_data.update(other.mesh.point_data)
