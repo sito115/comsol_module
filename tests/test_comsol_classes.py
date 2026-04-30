@@ -35,7 +35,7 @@ def _test_get_values(vtu: ComsolVtu):
     sweep_values = vtu.sweep_combos[0] if vtu._is_sweep else None
 
     f = vtu.exported_fields[0]
-    field_name = vtu.format_field(f, -1, sweep_values)
+    field_name = vtu.format_field(f, int(-1), sweep_values)
     _ = vtu.get_values(field_name)
     field_name = vtu.format_field(
         f, vtu.time_keys[0] if vtu.time_keys else "0", sweep_values
@@ -98,6 +98,12 @@ def test_vtu_mesh_operations(vtu_name, request: pytest.FixtureRequest):
 # ===========================================================================
 # Study-Specific Tests (Stationary)
 # ===========================================================================
+def test_stationary_get_array(vtu_stationary: ComsolVtu):
+    vtu = vtu_stationary
+    f = vtu.exported_fields[0]
+    arr = vtu.get_array(f)
+    assert arr.ndim == 1
+    assert arr.shape == (vtu.mesh.n_points,)
 
 
 def test_stationary_properties(vtu_stationary: ComsolVtu):
