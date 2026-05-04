@@ -28,7 +28,7 @@ class ComsolVtu:
     name: str = ""
 
     exported_fields: list[str] = field(default_factory=list)
-    times: dict[str, float] = field(default_factory=dict)
+    _times: dict[str, float] = field(default_factory=dict)
     sweep_keys: list[str] = field(default_factory=list)
     sweep_combos: np.ndarray = field(default_factory=lambda: np.array([]))
 
@@ -38,11 +38,11 @@ class ComsolVtu:
 
     @property
     def time_keys(self) -> list[str]:
-        return list(self.times.keys())
+        return list(self._times.keys())
 
     @property
     def time_values(self) -> list[float]:
-        return list(self.times.values())
+        return list(self._times.values())
 
     @classmethod
     def from_file(cls, path: str | Path, is_clean_mesh: bool = False) -> Self:
@@ -69,7 +69,7 @@ class ComsolVtu:
             vtu_path=path,
             mesh=mesh,
             exported_fields=fields,
-            times=times,
+            _times=times,
             sweep_keys=keys,
             sweep_combos=combos,
             _is_sweep=is_sweep,
@@ -88,7 +88,7 @@ class ComsolVtu:
         return cls(
             mesh=mesh,
             exported_fields=fields,
-            times=times,
+            _times=times,
             sweep_keys=keys,
             sweep_combos=combos,
             _is_sweep=is_sweep,
@@ -140,7 +140,7 @@ class ComsolVtu:
         if not self._is_stationary:
             t_values = self.time_values
             print(
-                f"Timesteps: {len(self.times)} (from {min(t_values):.3e} to {max(t_values):.3e})"
+                f"Timesteps: {len(self._times)} (from {min(t_values):.3e} to {max(t_values):.3e})"
             )
 
         print(f"Mesh Bounds: {self.mesh.bounds}")
@@ -201,7 +201,7 @@ class ComsolVtu:
         pattern_field = self.field_pattern.format(field_name, first_time_key)
         data[field_name] = data[pattern_field]
 
-        for key in self.times.keys():
+        for key in self._times.keys():
             try:
                 data.remove(self.field_pattern.format(field_name, key))
             except KeyError:
@@ -227,7 +227,7 @@ class ComsolVtu:
         if self._is_stationary and not self._is_sweep:  # Stationary case, non sweep
             return field_name
 
-        time_key = determine_time_key(time, self.times)  # Non-stationary case
+        time_key = determine_time_key(time, self._times)  # Non-stationary case
 
         if not self._is_sweep:  # Non-sweep case
             return self.field_pattern.format(field_name, time_key)
@@ -311,10 +311,10 @@ class ComsolVtu:
         n_values = self._n_values(location)
 
         if self._is_sweep and not self._is_stationary:
-            shape = (len(self.times), len(self.sweep_combos), n_values)
+            shape = (len(self._times), len(self.sweep_combos), n_values)
             matrix = np.zeros(shape)
 
-            for i, time_key in enumerate(self.times.keys()):
+            for i, time_key in enumerate(self._times.keys()):
                 for j, combo in enumerate(self.sweep_combos):
                     field_key = self.format_field(field, time_key, list(combo))
                     matrix[i, j] = data[field_key]
@@ -325,7 +325,7 @@ class ComsolVtu:
             return np.array(
                 [
                     data[self.format_field(field, time_key)]
-                    for time_key in self.times.keys()
+                    for time_key in self._times.keys()
                 ]
             )
 
@@ -352,10 +352,10 @@ class ComsolVtu:
             if self.mesh.points.shape != other.mesh.points.shape:
                 raise ValueError("Meshes have different point counts or coordinates.")
 
-            self.times.update(other.times)
+            self._times.update(other._times)
             self.mesh.point_data.update(other.mesh.point_data)
             # Re-sort times
-            self.times = dict(sorted(self.times.items(), key=lambda x: x[1]))
+            self._times = dict(sorted(self._times.items(), key=lambda x: x[1]))
 
     def delete_field(
         self,
@@ -377,7 +377,7 @@ class ComsolVtu:
             )
 
         data = self._data_store(location)
-        for time_key in self.times.keys():
+        for time_key in self._times.keys():
             internal_name = self.format_field(field_name, time_key)
             if internal_name in data:
                 data.remove(internal_name)

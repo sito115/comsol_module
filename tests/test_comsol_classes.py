@@ -110,7 +110,7 @@ def test_stationary_properties(vtu_stationary: ComsolVtu):
     vtu = vtu_stationary
     assert vtu._is_stationary is True
     assert vtu._is_sweep is False
-    assert len(vtu.times) == 0
+    assert len(vtu.time_values) == 0
     assert "Temperature" in vtu.exported_fields
 
 
@@ -148,7 +148,7 @@ def test_transient_properties(vtu_transient: ComsolVtu):
     vtu = vtu_transient
     assert vtu._is_stationary is False
     assert vtu._is_sweep is False
-    assert len(vtu.times) > 1
+    assert len(vtu.time_values) > 1
 
 
 def test_transient_get_array(vtu_transient: ComsolVtu):
@@ -156,7 +156,7 @@ def test_transient_get_array(vtu_transient: ComsolVtu):
     f = vtu.exported_fields[0]
     arr = vtu.get_array(f)
     assert arr.ndim == 2
-    assert arr.shape == (len(vtu.times), vtu.mesh.n_points)
+    assert arr.shape == (len(vtu.time_values), vtu.mesh.n_points)
 
 
 def test_transient_mutations(vtu_transient: ComsolVtu):
@@ -178,15 +178,15 @@ def test_transient_merge(vtu_transient: ComsolVtu):
 
     # Simulate a new timestep in vtu_b
     new_t = "9999.0"
-    vtu_b.times[new_t] = 9999.0
+    vtu_b._times[new_t] = 9999.0
     for field in vtu_b.exported_fields:
         # Get data from some existing timestep to replicate
         old_key = vtu_b.format_field(field, 0)
         vtu_b.mesh.point_data[f"{field}_@_t={new_t}"] = vtu_b.mesh.point_data[old_key]
 
     vtu_a.merge_datasets(vtu_b)
-    assert new_t in vtu_a.times
-    assert len(vtu_a.times) == len(vtu_transient.times) + 1
+    assert new_t in vtu_a.time_keys
+    assert len(vtu_a.time_values) == len(vtu_transient.time_values) + 1
 
 
 # ===========================================================================
@@ -197,7 +197,7 @@ def test_transient_merge(vtu_transient: ComsolVtu):
 def test_sweep_properties(vtu_sweep: ComsolVtu):
     vtu = vtu_sweep
     assert vtu._is_sweep is True
-    assert len(vtu.times) > 0
+    assert len(vtu.time_values) > 0
 
 
 def test_sweep_get_array(vtu_sweep: ComsolVtu):
@@ -206,7 +206,7 @@ def test_sweep_get_array(vtu_sweep: ComsolVtu):
     arr = vtu.get_array(f)
     # Shape: (T, Sweep, N)
     assert arr.ndim == 3
-    assert arr.shape[0] == len(vtu.times)
+    assert arr.shape[0] == len(vtu.time_values)
     assert arr.shape[1] == len(vtu.sweep_combos)
     assert arr.shape[2] == vtu.mesh.n_points
 
