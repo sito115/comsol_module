@@ -2,3 +2,9 @@ __pycache__/
 .venv/
 .vscode/
 uv.lock
+**.DS_Store
+**.html
+**.js
+**.css
+**.bak
+/docs/_build
