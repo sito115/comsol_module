@@ -15,7 +15,24 @@ jupyter = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=9.0.3"]
+dev = [
+    {include-group = 'test'},
+    {include-group = 'docs'},
+]
+
+test = [
+    'Ruff         >= 0.11',
+    'basedPyright >= 1.29',
+    'pyTest       >= 8',
+    'pyTest-cov   >= 7',
+    'codecov      >= 2',
+]
+
+docs = [
+    'Sphinx      >= 8',
+    'MyST-parser >= 1',
+    'Furo        >= 2024',
+]
 
 [tool.pytest.ini_options]
 pythonpath = "src"
