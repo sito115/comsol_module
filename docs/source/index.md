@@ -7,6 +7,7 @@ Welcome to the documentation.
 ```{toctree}
 :maxdepth: 2
 
-/api/comsol_module.comsol_classes.md
-/api/comsol_module.helper.md
-/api/comsol_module.voxeliser.md
+/api/comsol_module.ComsolVtu
+/api/comsol_module.ComsolMetaData
+/api/comsol_module.helper
+/api/comsol_module.voxeliser
