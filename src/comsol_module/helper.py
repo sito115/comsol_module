@@ -11,8 +11,22 @@ logger = logging.getLogger()
 
 
 def determine_time_key(time: str | Number, times: dict[str, float]) -> str:
-    if not times:
-        raise ValueError("Empty times dictionary.")
+    """Determine the string time key from a query.
+
+    Args:
+        time: Time query. Can be a string key, a float value (closest match),
+            or an integer index.
+        times: Mapping of string keys to float time values.
+
+    Returns:
+        The matching string key from the dictionary.
+
+    Raises:
+        ValueError: If the times dictionary is empty or a string key is not found.
+        IndexError: If an integer index is out of bounds.
+        TypeError: If the time type is unsupported.
+
+    """
 
     keys = list(times.keys())
 
@@ -44,27 +58,25 @@ def ensure_pathlib_path(path: str | Path | list[str | Path]) -> list[Path] | Pat
 def read_comsol_fields(
     mesh: pv.DataSet,
 ) -> tuple[list[str], dict[str, float], list[str], np.ndarray]:
-    """
-    Parse COMSOL field names from mesh point or cell data.
+    """Parse COMSOL field names from mesh point or cell data.
 
-    Field naming patterns:
-        FIELDNAME
-        FIELDNAME_@_t=TIME
-        FIELDNAME_@_t=TIME,_PARAM1=VAL1,_PARAM2=VAL2
+    Supports various field naming patterns including stationary, transient,
+    and parametric sweeps.
 
-    Returns
-    -------
-    base_fields : list[str]
-        Exported base field names (e.g. ['Temperature', 'Pressure'])
+    Naming patterns:
+        - ``FIELDNAME``
+        - ``FIELDNAME_@_t=TIME``
+        - ``FIELDNAME_@_t=TIME,_PARAM1=VAL1,_PARAM2=VAL2``
 
-    times_map : dict[str, float]
-        Mapping of time strings to float values
+    Args:
+        mesh: The PyVista mesh to parse.
 
-    sweep_keys : list[str]
-        Sweep parameter names
-
-    sweep_combos : np.ndarray
-        Unique combinations of sweep parameter values
+    Returns:
+        A tuple containing:
+            - **base_fields** (list[str]): Exported base field names.
+            - **times_map** (dict[str, float]): Mapping of time strings to floats.
+            - **sweep_keys** (list[str]): Names of sweep parameters.
+            - **sweep_combos** (np.ndarray): Unique combinations of sweep values.
     """
     invalid_field_names = ["Data"]
     keys = mesh.point_data.keys()
@@ -128,7 +140,16 @@ def read_comsol_fields(
 
 
 def get_field_name_pattern(is_stationary: bool, is_sweep: bool) -> str:
-    """Return the naming pattern used by COMSOL exports."""
+    """Return the naming pattern used by COMSOL exports.
+
+    Args:
+        is_stationary: True if the study is stationary.
+        is_sweep: True if the study is a parametric sweep.
+
+    Returns:
+        A format string with placeholders for field name, time, and sweep values.
+
+    """
     if is_stationary:
         if is_sweep:
             # TODO: Verify stationary sweep pattern in COMSOL VTU export
@@ -145,7 +166,16 @@ def format_value(
     sig: int = 4,
     sci_threshold: tuple[float, float] = (1e-4, 1e6),
 ) -> str:
-    """Format a value using significant digits, switching to scientific notation when needed."""
+    """Format a value with significant digits and optional scientific notation.
+
+    Args:
+        x: The value to format.
+        sig: Number of significant digits.
+        sci_threshold: Tuple of (lower, upper) thresholds for scientific notation.
+
+    Returns:
+        The formatted string.
+    """
 
     try:
         val = float(x)
@@ -162,7 +192,17 @@ def format_value(
 
 
 def format_sweep_parameters(sweep_keys: list[str], values: np.ndarray) -> str:
-    """Format sweep keys and values into the COMSOL string segment: _k1=v1,_k2=v2..."""
+    """Format sweep keys and values into a COMSOL string segment.
+
+    Example output: ``_k1=v1,_k2=v2``
+
+    Args:
+        sweep_keys: List of parameter names.
+        values: NumPy array of parameter values.
+
+    Returns:
+        The formatted string segment.
+    """
     return ",".join(f"_{k}={format_value(v)}" for k, v in zip(sweep_keys, values))
 
 

@@ -32,7 +32,7 @@ def vtu_copy(request):
 
 
 def _test_get_values(vtu: ComsolVtu):
-    sweep_values = vtu.sweep_combos[0] if vtu._is_sweep else None
+    sweep_values = vtu.sweep_combos[0] if vtu.metadata.is_sweep else None
 
     f = vtu.exported_fields[0]
     field_name = vtu.format_field(f, int(-1), sweep_values)
@@ -108,8 +108,8 @@ def test_stationary_get_array(vtu_stationary: ComsolVtu):
 
 def test_stationary_properties(vtu_stationary: ComsolVtu):
     vtu = vtu_stationary
-    assert vtu._is_stationary is True
-    assert vtu._is_sweep is False
+    assert vtu.metadata.is_stationary is True
+    assert vtu.metadata.is_sweep is False
     assert len(vtu.time_values) == 0
     assert "Temperature" in vtu.exported_fields
 
@@ -146,8 +146,8 @@ def test_stationary_unsupported_ops(vtu_stationary: ComsolVtu):
 
 def test_transient_properties(vtu_transient: ComsolVtu):
     vtu = vtu_transient
-    assert vtu._is_stationary is False
-    assert vtu._is_sweep is False
+    assert vtu.metadata.is_stationary is False
+    assert vtu.metadata.is_sweep is False
     assert len(vtu.time_values) > 1
 
 
@@ -178,7 +178,7 @@ def test_transient_merge(vtu_transient: ComsolVtu):
 
     # Simulate a new timestep in vtu_b
     new_t = "9999.0"
-    vtu_b._times[new_t] = 9999.0
+    vtu_b.metadata.times[new_t] = 9999.0
     for field in vtu_b.exported_fields:
         # Get data from some existing timestep to replicate
         old_key = vtu_b.format_field(field, 0)
@@ -196,7 +196,7 @@ def test_transient_merge(vtu_transient: ComsolVtu):
 
 def test_sweep_properties(vtu_sweep: ComsolVtu):
     vtu = vtu_sweep
-    assert vtu._is_sweep is True
+    assert vtu.metadata.is_sweep is True
     assert len(vtu.time_values) > 0
 
 
@@ -219,7 +219,8 @@ def test_sweep_get_array(vtu_sweep: ComsolVtu):
 def test_deprecated_get_point_values(vtu_stationary: ComsolVtu):
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        res = vtu_stationary.get_point_values(vtu_stationary.exported_fields[0])
+        res = vtu_stationary.get_point_values(
+            vtu_stationary.exported_fields[0])
         assert len(w) > 0
         assert issubclass(w[-1].category, DeprecationWarning)
         assert res.shape == (vtu_stationary.mesh.n_points,)

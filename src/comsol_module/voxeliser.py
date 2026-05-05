@@ -12,6 +12,19 @@ logger = logging.getLogger()
 
 @dataclass
 class Voxel:
+    """Voxelization utility for COMSOL datasets.
+
+    Handles the conversion of regular point-based grids into PyVista
+    :class:`pyvista.ImageData` objects (voxels).
+
+    Attributes:
+        mesh: The input mesh containing the regular point grid.
+        nx, ny, nz: Number of voxels in each dimension.
+        dx, dy, dz: Voxel spacing in each dimension.
+        origin: Coordinate of the bottom-left-front corner of the grid.
+        xs, ys, zs: Sorted unique coordinate values for each dimension.
+
+    """
     mesh: pv.PolyData
     nx: int
     ny: int
@@ -19,20 +32,27 @@ class Voxel:
     dx: float
     dy: float
     dz: float
-    origin: VectorLike
+    origin: tuple[float, float, float]
     xs: np.ndarray = field(default_factory=lambda: np.empty(0))
     ys: np.ndarray = field(default_factory=lambda: np.empty(0))
     zs: np.ndarray = field(default_factory=lambda: np.empty(0))
 
     @classmethod
     def from_mesh(cls, mesh: pv.PolyData) -> Self:
-        """Creates a Voxel class from a given mesh whose points represent the center of voxels.
+        """Create a Voxel instance from a mesh with regular point centers.
+
+        The mesh points are assumed to represent the centers of the voxels.
+        The regularity of the grid is checked during initialization.
 
         Args:
-            mesh (pv.PolyData):
+            mesh: The PyVista PolyData mesh to voxelize.
 
         Returns:
-            Self: Voxel Class.
+            A new :class:`Voxel` instance.
+
+        Raises:
+            AssertionError: If the grid is not regular.
+
         """
         xs = np.unique(mesh.points[:, 0])
         ys = np.unique(mesh.points[:, 1])
@@ -74,10 +94,11 @@ class Voxel:
         )
 
     def create_image_data(self) -> pv.ImageData:
-        """
+        """Create an empty PyVista ImageData grid matching the voxel geometry.
 
         Returns:
-            pv.ImageData:
+            A new :class:`pyvista.ImageData` instance.
+
         """
         grid = pv.ImageData(
             dimensions=(
@@ -92,16 +113,21 @@ class Voxel:
         return grid
 
     def map_point_data_to_cells(self, grid: pv.ImageData) -> pv.ImageData:
-        """Maps point values of self.mesh to cell values of grid.
+        """Map point values from the source mesh to cell values of a voxel grid.
+
+        This performs a lookup based on coordinates to correctly place
+        point data into the 3D array of the image data.
 
         Args:
-            grid (pv.ImageData): _description_
-
-        Raises:
-            ValueError: _description_
+            grid: The target PyVista ImageData grid.
 
         Returns:
-            pv.ImageData: _description_
+            The input grid updated with cell data from the mesh.
+
+        Raises:
+            ValueError: If the number of points in the mesh doesn't match
+                the number of cells in the grid.
+
         """
         if grid.n_cells != self.mesh.n_points:
             raise ValueError(

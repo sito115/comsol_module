@@ -1,6 +1,7 @@
-# comsol_module
+# ComsolVtu Class
 ```{eval-rst}
 .. autoclass:: comsol_module.ComsolVtu
     :show-inheritance:
-    :members: parse
+    :members:
+    :undoc-members:
 ```
