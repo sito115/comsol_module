@@ -14,10 +14,10 @@ Typical usage::
 
     # Load a simulation file
     vtu = ComsolVtu.from_file("simulation.vtu")
-    
+
     # Print summary information
     vtu.info()
-    
+
     # Extract data as a NumPy array
     temperature = vtu.get_array("Temperature")
 """
@@ -276,8 +276,7 @@ class ComsolVtu:
                 converted cell-data mesh.
 
         """
-        self.mesh = self.mesh.point_data_to_cell_data(
-            pass_point_data=pass_point_data)
+        self.mesh = self.mesh.point_data_to_cell_data(pass_point_data=pass_point_data)
 
     def _data_store(self, location: DataLocation = "point") -> pv.DataSetAttributes:
         """Return the mesh data store for the requested *location*.
@@ -313,16 +312,13 @@ class ComsolVtu:
     def info(self) -> None:
         """Print a human-readable summary of the dataset."""
         display_name = self.name or (
-            self.vtu_path.name if isinstance(
-                self.vtu_path, Path) else self.vtu_path
+            self.vtu_path.name if isinstance(self.vtu_path, Path) else self.vtu_path
         )
         meta = self.metadata
 
         print(f"Dataset: {display_name}")
         print(f"Path: {self.vtu_path}")
-        print(
-            f"Study Type: {'Stationary' if meta.is_stationary else 'Time-dependent'}"
-        )
+        print(f"Study Type: {'Stationary' if meta.is_stationary else 'Time-dependent'}")
 
         if not meta.is_stationary:
             t_vals = self.time_values
@@ -391,20 +387,24 @@ class ComsolVtu:
             location: ``"point"`` (default) or ``"cell"``.
 
         """
-        self.metadata._require_transient_non_sweep("unify_field")
-
+        # self.metadata._require_transient_non_sweep("unify_field")
         data = self._data_store(location)
-        first_time_key = self.time_keys[0]
-        pattern_field = self.metadata.field_pattern.format(
-            field_name, first_time_key)
+        first_time_key = self.time_keys[0] if len(self.time_keys) > 0 else 0
+        first_sweep_combo = self.sweep_combos[0] if len(self.sweep_combos) > 0 else None
+        pattern_field = self.format_field(field_name, first_time_key, first_sweep_combo)
         data[field_name] = data[pattern_field]
 
-        for key in self.metadata.times:
-            try:
-                data.remove(
-                    self.metadata.field_pattern.format(field_name, key))
-            except KeyError:
-                pass
+        if not self.metadata.is_sweep:
+            sweep_combos = [None]
+        else:
+            sweep_combos = self.sweep_combos
+
+        for sweep_combo in sweep_combos:
+            for key in self.time_keys:
+                try:
+                    data.remove(self.format_field(field_name, key, sweep_combo))
+                except KeyError:
+                    pass
 
     def format_field(
         self,
@@ -436,8 +436,7 @@ class ComsolVtu:
 
         # --- parametric sweep ---
         if sweep_values is None:
-            raise ValueError(
-                "sweep_values must be provided for parametric sweeps.")
+            raise ValueError("sweep_values must be provided for parametric sweeps.")
 
         if len(sweep_values) != len(self.sweep_keys):
             raise ValueError(
@@ -509,10 +508,7 @@ class ComsolVtu:
         # Transient without sweep
         if not meta.is_sweep and not meta.is_stationary:
             return np.array(
-                [
-                    data[self.format_field(field, time_key)]
-                    for time_key in meta.times
-                ]
+                [data[self.format_field(field, time_key)] for time_key in meta.times]
             )
 
         # Transient with sweep
@@ -558,8 +554,7 @@ class ComsolVtu:
         if field_name_3d not in data:
             raise KeyError(f"Field '{field_name_3d}' not found in 3D mesh.")
         if field_name_2d not in surface.point_data:
-            raise KeyError(
-                f"Field '{field_name_2d}' not found in surface dataset.")
+            raise KeyError(f"Field '{field_name_2d}' not found in surface dataset.")
 
         # Vectorized lookup using structured coordinate views
         def structured_view(arr: np.ndarray) -> np.ndarray:
@@ -602,8 +597,7 @@ class ComsolVtu:
                 raise TypeError(f"Expected ComsolVtu, got {type(other)}")
 
             if self.mesh.points.shape != other.mesh.points.shape:
-                raise ValueError(
-                    "Meshes have different point counts or coordinates.")
+                raise ValueError("Meshes have different point counts or coordinates.")
 
             self.metadata.times.update(other.metadata.times)
             self.mesh.point_data.update(other.mesh.point_data)

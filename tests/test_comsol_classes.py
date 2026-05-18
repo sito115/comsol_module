@@ -132,8 +132,6 @@ def test_stationary_get_values(vtu_stationary: ComsolVtu):
 def test_stationary_unsupported_ops(vtu_stationary: ComsolVtu):
     vtu = copy.deepcopy(vtu_stationary)
     with pytest.raises(NotImplementedError):
-        vtu.unify_field("Temperature")
-    with pytest.raises(NotImplementedError):
         vtu.delete_field("Temperature")
     with pytest.raises(NotImplementedError):
         vtu.merge_datasets(vtu)
@@ -219,8 +217,7 @@ def test_sweep_get_array(vtu_sweep: ComsolVtu):
 def test_deprecated_get_point_values(vtu_stationary: ComsolVtu):
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        res = vtu_stationary.get_point_values(
-            vtu_stationary.exported_fields[0])
+        res = vtu_stationary.get_point_values(vtu_stationary.exported_fields[0])
         assert len(w) > 0
         assert issubclass(w[-1].category, DeprecationWarning)
         assert res.shape == (vtu_stationary.mesh.n_points,)

@@ -187,7 +187,7 @@ def format_value(
 
     use_sci = abs_val and (abs_val < lower or abs_val >= upper)
 
-    fmt = f"{val:.{sig}e}" if use_sci else f"{val:.{sig}g}"
+    fmt = f"{val:.0E}" if use_sci else f"{val:g}"
     return fmt
 
 
