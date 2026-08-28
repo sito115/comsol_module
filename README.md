@@ -6,8 +6,21 @@ Powerful for post-processing of multiple exports with Python.
 Recommended via uv:
 ``uv add git+http://10.0.1.2:3000/tsimader/comsol_module.git --branch master``
 
+To install dependencies:
+
+`uv sync`
+
 
 Currently, the module is able to read transient and stationary studies as well as sweeps from transient studies.
+
+## Create Docs
+
+```
+uv sync --dev
+cd docs
+make html
+```
+
 
 ## Examples
 
