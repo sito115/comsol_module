@@ -79,6 +79,7 @@ class Voxel:
             np.round(zs.min()) - dz / 2,
         )
 
+        assert mesh.n_points == nx * ny * nz, f"{mesh.n_points=} != {(nx * ny * nz)=}."
         return cls(
             mesh=mesh,
             nx=nx,
