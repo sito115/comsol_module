@@ -4,7 +4,11 @@ version = "0.2.0"
 description = "Module to read and process output vtus/txt files from COMSOL."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["numpy", "pyvista>=0.44.2"]
+dependencies = [
+    "numpy",
+    "pandas>=3.0.5",
+    "pyvista>=0.44.2",
+]
 
 [project.optional-dependencies]
 jupyter = [
