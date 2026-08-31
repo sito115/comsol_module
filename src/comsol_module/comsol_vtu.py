@@ -31,117 +31,16 @@ from typing import Literal, Self, cast
 import numpy as np
 import pyvista as pv
 
+from .comsol_meta import ComsolMetaData
 from .helper import (
     ComsolKeyNames,
     determine_time_key,
     format_sweep_parameters,
-    get_field_name_pattern,
-    read_comsol_fields,
 )
+from .protocols import ModuleClass
 
 #: Selector for point-based or cell-based data access on a PyVista mesh.
 DataLocation = Literal["point", "cell"]
-
-
-# ---------------------------------------------------------------------------
-# Metadata
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ComsolMetaData:
-    """Metadata extracted from a COMSOL VTU export.
-
-    Stores the base field names, time-step mapping, parametric-sweep
-    parameters, and derived flags that describe the study type.
-
-    Attributes:
-        exported_fields: Base field names found in the export
-            (e.g., ``["Temperature", "Pressure"]``).
-        times: Mapping of time-key strings to their float values,
-            sorted in ascending order.
-        sweep_keys: Parameter names of a parametric sweep
-            (empty list when no sweep is present).
-        sweep_combos: Array of unique sweep-parameter combinations,
-            shape ``(N_COMBOS, N_PARAMS)``.
-        is_sweep: ``True`` when the dataset contains a parametric sweep.
-        is_stationary: ``True`` when the dataset has at most one time step.
-        field_pattern: :meth:`str.format`-compatible pattern used to
-            reconstruct internal field names from base name, time key,
-            and (optionally) sweep segment.
-
-    """
-
-    exported_fields: list[str] = field(default_factory=list)
-    times: dict[str, float] = field(default_factory=dict)
-    sweep_keys: list[str] = field(default_factory=list)
-    sweep_combos: np.ndarray = field(default_factory=lambda: np.array([]))
-
-    is_sweep: bool = False
-    is_stationary: bool = False
-    field_pattern: str = ""
-
-    # -- convenience properties --------------------------------------------
-
-    @property
-    def time_keys(self) -> list[str]:
-        """Time-step keys in export order."""
-        return list(self.times.keys())
-
-    @property
-    def time_values(self) -> list[float]:
-        """Time-step values (floats) in export order."""
-        return list(self.times.values())
-
-    # -- factory -----------------------------------------------------------
-
-    @classmethod
-    def from_mesh(cls, mesh: pv.DataSet) -> Self:
-        """Build metadata by parsing the field names of *mesh*.
-
-        This delegates to :func:`~comsol_module.helper.read_comsol_fields`
-        and derives ``is_sweep``, ``is_stationary``, and ``field_pattern``
-        automatically.
-
-        Args:
-            mesh: The PyVista dataset to parse.
-
-        Returns:
-            A new :class:`ComsolMetaData` instance.
-
-        """
-        fields, times, keys, combos = read_comsol_fields(mesh)
-
-        is_sweep = len(keys) > 0
-        is_stationary = len(times) <= 1
-        field_pattern = get_field_name_pattern(is_stationary, is_sweep)
-
-        return cls(
-            exported_fields=fields,
-            times=times,
-            sweep_keys=keys,
-            sweep_combos=combos,
-            is_sweep=is_sweep,
-            is_stationary=is_stationary,
-            field_pattern=field_pattern,
-        )
-
-    # -- guards ------------------------------------------------------------
-
-    def _require_transient_non_sweep(self, operation: str) -> None:
-        """Check if the study type supports a transient-only operation.
-
-        Args:
-            operation: Name of the operation being attempted.
-
-        Raises:
-            NotImplementedError: If the study is a sweep or stationary.
-
-        """
-        if self.is_sweep or self.is_stationary:
-            raise NotImplementedError(
-                f"{operation} is not yet supported for sweeps or stationary studies."
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +49,7 @@ class ComsolMetaData:
 
 
 @dataclass
-class ComsolVtu:
+class ComsolVtu(ModuleClass):
     """High-level wrapper for COMSOL VTU simulation exports.
 
     Construct instances via the :meth:`from_file` or :meth:`from_mesh`
@@ -158,7 +57,7 @@ class ComsolVtu:
 
     Attributes:
         mesh: The underlying PyVista mesh holding point/cell data.
-        vtu_path: Path to the source ``.vtu`` file (``None`` when created
+        path: Path to the source ``.vtu`` file (``None`` when created
             from an in-memory mesh).
         name: Optional human-readable label (used by :meth:`info`).
         metadata: Parsed :class:`ComsolMetaData` for this dataset.
@@ -181,7 +80,7 @@ class ComsolVtu:
     """
 
     mesh: pv.DataSet
-    vtu_path: Path | None = None
+    path: Path | None = None
     name: str = ""
 
     metadata: ComsolMetaData = field(default_factory=ComsolMetaData)
@@ -240,7 +139,7 @@ class ComsolVtu:
         logging.debug("Finished reading VTU file.")
 
         return cls(
-            vtu_path=path,
+            path=path,
             mesh=mesh,
             metadata=ComsolMetaData.from_mesh(mesh),
         )
@@ -264,7 +163,7 @@ class ComsolVtu:
     # -- dunder methods ----------------------------------------------------
 
     def __repr__(self) -> str:
-        return f"ComsolVtu(path='{self.vtu_path}', fields={len(self.exported_fields)})"
+        return f"ComsolVtu(path='{self.path}', fields={len(self.exported_fields)})"
 
     # -- data access helpers -----------------------------------------------
 
@@ -312,12 +211,12 @@ class ComsolVtu:
     def info(self) -> None:
         """Print a human-readable summary of the dataset."""
         display_name = self.name or (
-            self.vtu_path.name if isinstance(self.vtu_path, Path) else self.vtu_path
+            self.path.name if isinstance(self.path, Path) else self.path
         )
         meta = self.metadata
 
         print(f"Dataset: {display_name}")
-        print(f"Path: {self.vtu_path}")
+        print(f"Path: {self.path}")
         print(f"Study Type: {'Stationary' if meta.is_stationary else 'Time-dependent'}")
 
         if not meta.is_stationary:
