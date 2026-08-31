@@ -51,7 +51,7 @@ def _test_properties_and_mesh(vtu: ComsolVtu):
     assert len(vtu.exported_fields) > 0
     assert vtu.mesh.n_points > 0
     assert vtu.mesh.n_cells > 0
-    assert vtu.vtu_path != ""
+    assert vtu.path != ""
     assert repr(vtu).startswith("ComsolVtu(")
 
 

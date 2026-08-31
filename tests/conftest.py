@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIONARY_PATH = PROJECT_ROOT / "Example_Stationary_NonSweep.vtu"
 TRANSIENT_PATH = PROJECT_ROOT / "Example_Transient_NonSweep.vtu"
 SWEEP_PATH = PROJECT_ROOT / "Example_TransientSweep.vtu"
+CSV_PATH = PROJECT_ROOT / "Scen_1AvLineProduction well.csv"
 
 
 def _load(path: Path) -> ComsolVtu:
