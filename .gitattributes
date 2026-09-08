@@ -1,0 +1,4 @@
+tests/data/Example_Stationary_NonSweep.vtu filter=lfs diff=lfs merge=lfs -text
+tests/data/Example_Transient_NonSweep.vtu filter=lfs diff=lfs merge=lfs -text
+tests/data/Example_TransientSweep.vtu filter=lfs diff=lfs merge=lfs -text
+tests/data/Scen_1AvLineProductionWell.csv filter=lfs diff=lfs merge=lfs -text
